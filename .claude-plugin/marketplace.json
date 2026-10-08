@@ -1,0 +1,34 @@
+{
+  "name": "claude-code-mods",
+  "description": "Mods para o Claude Code feitos com function hooks: progresso, uso do plano, cache, prévia de HTML e design system.",
+  "owner": {
+    "name": "Kelvi-Maycon"
+  },
+  "plugins": [
+    {
+      "name": "progresso",
+      "source": "./plugins/progresso",
+      "description": "Barras de progresso acima do prompt, faixas de subagentes e comandos em background, painel lateral e sons."
+    },
+    {
+      "name": "barra-uso",
+      "source": "./plugins/barra-uso",
+      "description": "Pílulas de uso do plano (5 h e 7 dias), contexto até a compactação e tempo de cache."
+    },
+    {
+      "name": "cache-frio",
+      "source": "./plugins/cache-frio",
+      "description": "Avisa antes de um envio que vai regravar o cache frio."
+    },
+    {
+      "name": "previa",
+      "source": "./plugins/previa",
+      "description": "Servidor de prévia para o HTML editado, com a URL acima do prompt."
+    },
+    {
+      "name": "ds-primeiro",
+      "source": "./plugins/ds-primeiro",
+      "description": "Anexa a skill do seu design system ao primeiro pedido visual da sessão."
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "ds-primeiro",
+  "version": "0.1.0",
+  "description": "Anexa a skill do seu design system ao primeiro pedido de peça visual da sessão. Configure o nome da skill para ligar.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "skill": {
+      "type": "string",
+      "title": "Skill do design system",
+      "description": "Nome da skill que o modelo deve carregar antes de criar uma peça visual (ex.: meu-design-system). Vazio desliga o mod.",
+      "default": ""
+    },
+    "rotulo": {
+      "type": "string",
+      "title": "Rótulo",
+      "description": "Nome exibido na faixa, no toast e na linha anexada. Vazio usa o nome da skill.",
+      "default": ""
+    },
+    "ignorar": {
+      "type": "string",
+      "title": "Termos que dispensam",
+      "description": "Termos extras, separados por vírgula, que, citados no pedido, fazem o mod não anexar nada (ex.: nome da marca).",
+      "default": ""
+    }
+  }
+}

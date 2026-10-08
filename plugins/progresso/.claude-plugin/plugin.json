@@ -1,0 +1,6 @@
+{
+  "name": "progresso",
+  "version": "0.1.0",
+  "description": "Barras de progresso acima do prompt, com faixas de subagentes e comandos em background e som ao terminar, falhar ou esperar decisão.",
+  "types": "./types/index.d.ts"
+}

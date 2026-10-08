@@ -1,0 +1,6 @@
+{
+  "name": "cache-frio",
+  "version": "0.1.0",
+  "description": "Avisa antes de um envio que regrava o cache frio (parado além do ttl, contexto acima de 100k) e mostra contexto e tempo de cache em /cache-frio.",
+  "types": "./types/index.d.ts"
+}

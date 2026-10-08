@@ -1,0 +1,6 @@
+{
+  "name": "barra-uso",
+  "version": "0.1.0",
+  "description": "Linha de pílulas acima do campo: uso do plano nas janelas de 5 h (5H) e 7 dias (7D), contexto até a compactação automática (CTX), tempo restante do TTL do cache (CACHE) e o DS ligado ou desligado nesta sessão (DS on/off).",
+  "types": "./types/index.d.ts"
+}

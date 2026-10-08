@@ -1,0 +1,5 @@
+# Tipos gerados pelo Claude Code no primeiro carregamento de cada plugin
+.claude-plugin/types/
+plugins/*/.claude-plugin/types/
+node_modules/
+.DS_Store

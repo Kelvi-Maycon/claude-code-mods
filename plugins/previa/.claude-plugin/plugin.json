@@ -1,0 +1,6 @@
+{
+  "name": "previa",
+  "version": "0.1.0",
+  "description": "Mantém um servidor de prévia no ar para o HTML editado e mostra a URL acima do prompt.",
+  "types": "./types/index.d.ts"
+}

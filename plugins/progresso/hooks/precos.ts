@@ -1,5 +1,5 @@
-// Preços da API da Anthropic em US$ por milhão de tokens e janela de contexto, da tabela da skill claude-api
-// (cache de 2026-10-06). Cache escrito conta 1,25x a entrada (TTL de 5 min); cache lido, o valor da tabela.
+// Preços da API da Anthropic em US$ por milhão de tokens e janela de contexto, da tabela pública de
+// preços (outubro de 2026). Cache escrito conta 1,25x a entrada (TTL de 5 min); cache lido, o valor da tabela.
 // Modelo fora da tabela fica sem custo estimado.
 
 type Preco = { entrada: number; saida: number; lido: number; janela: number }

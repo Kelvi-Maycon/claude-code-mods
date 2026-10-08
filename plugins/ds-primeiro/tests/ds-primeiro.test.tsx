@@ -5,7 +5,7 @@ import type { On, PromptEditInput, PromptEditResult, PromptOrigin, Register } fr
 import { pedeDs } from '../hooks/detecta'
 
 const COMPOSER: PromptOrigin = { kind: 'composer' }
-const HTML = 'cria um HTML que mostre de forma clara como isso funciona'
+const HTML = 'cria um HTML com o diagrama do fluxo'
 const BANDA = {
   plugin: 'ds-primeiro',
   surface: 'terminal',
@@ -19,10 +19,10 @@ const TERMOS = [CONFIG.skill, CONFIG.rotulo, ...CONFIG.ignorar.split(',')]
 test('detecção: pedidos que anexam', () => {
   for (const texto of [
     HTML,
-    'Melhora bastante essa tela, quero algo mais bonito e com mais motion',
-    'refaça todas as paginas com uma organização melhor',
+    'melhora o layout desta tela',
+    'refaça as paginas do site',
     // Uma pasta com o nome do DS no meio de um caminho não conta como citar o DS.
-    "'~/projetos/acme/site' melhora bastante esse layout, deixa mais limpo",
+    "'~/projetos/acme/site' melhora o layout",
     'cria uma landing em ~/projetos/acme/lp',
   ]) {
     expect(pedeDs(texto, TERMOS), texto).toBe(true)
@@ -32,13 +32,13 @@ test('detecção: pedidos que anexam', () => {
 test('detecção: pedidos que não anexam', () => {
   for (const texto of [
     'Cria uma página simples de boas-vindas com o design da Contoso',
-    'usa minha identidade visual, as cores e as fontes',
-    'deu certo? acabou?',
+    'cria uma tela com a identidade visual do projeto',
+    'qual o status?',
     'reinicia o servidor',
-    'Construa um jardim em Three.js. Não use skills. Faça você mesmo.',
-    'analisa esse relatório aqui',
+    'Construa uma cena em Three.js. Não use skills.',
+    'analisa o relatório',
     'cria uma landing sem ds',
-    'faz um dashboard, precisa usar mais o design system agora',
+    'faz um dashboard com o design system',
     'cria um guia de estilo',
     // A skill, o rótulo ou um termo extra citados no pedido dispensam a linha.
     'cria uma landing /acme-design-system',
@@ -113,7 +113,7 @@ test('anexa uma vez por sessão, sem tocar no texto, e rearma depois de compacta
   )
   expect(visto.toasts).toEqual(['DS Acme anexado a este pedido · /ds off desliga'])
 
-  expect((await envia($, 'refaça todas as paginas com uma organização melhor')).context).toBeUndefined()
+  expect((await envia($, 'refaça as paginas do site')).context).toBeUndefined()
   expect(visto.toasts).toHaveLength(1)
 
   await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'oi', toolUses: [] }] })

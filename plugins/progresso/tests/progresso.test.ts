@@ -59,34 +59,34 @@ const montar = ($: Engine, surface: 'terminal' | 'desktop') =>
 
 const PLANO = {
   id: 'pub',
-  titulo: 'Publicar página',
+  titulo: 'Corrigir o login',
   etapas: [
-    { nome: 'Preparar', passos: ['Ler briefing', 'Mapear seções'] },
-    { nome: 'Construir', passos: ['Montar hero'] },
+    { nome: 'Preparar', passos: ['Ler as issues', 'Mapear módulos'] },
+    { nome: 'Construir', passos: ['Escrever testes'] },
   ],
 }
 
 test('cria a barra, avança com proximo e reescreve o plano preservando os feitos', async ($, on) => {
   mundo(on)
-  expect((await progresso($, PLANO)).result).toBe('0/3 · em andamento · ativo: Ler briefing')
-  expect((await progresso($, { id: 'pub', proximo: true })).result).toBe('1/3 · em andamento · ativo: Mapear seções')
+  expect((await progresso($, PLANO)).result).toBe('0/3 · em andamento · ativo: Ler as issues')
+  expect((await progresso($, { id: 'pub', proximo: true })).result).toBe('1/3 · em andamento · ativo: Mapear módulos')
 
   const reescrito = await progresso($, {
     id: 'pub',
-    etapas: [{ nome: 'Preparar', passos: ['Ler briefing', 'Entrevistar cliente'] }, { nome: 'Construir', passos: ['Montar hero', 'Montar oferta'] }],
+    etapas: [{ nome: 'Preparar', passos: ['Ler as issues', 'Reproduzir o bug'] }, { nome: 'Construir', passos: ['Escrever testes', 'Escrever docs'] }],
   })
-  expect(reescrito.result).toBe('1/4 · em andamento · ativo: Entrevistar cliente')
+  expect(reescrito.result).toBe('1/4 · em andamento · ativo: Reproduzir o bug')
 
   for (const surface of SUPERFICIES) {
     const ui = await montar($, surface)
     if (surface === 'terminal') {
-      expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'Preparar · Entrevistar cliente' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Preparar · Reproduzir o bug' })).toBeDefined()
       expect(String((await ui.find({ key: 'painel:pub' }))?.props.label)).toContain('25%')
     } else {
       const svg = await ui.find({ type: 'Svg' })
-      expect(String(svg?.props.source)).toContain('>Publicar página<tspan class="kc"> · Preparar</tspan></text>')
-      expect(String(svg?.props.alt)).toContain('Preparar · Entrevistar cliente, 1 de 4, 25%')
+      expect(String(svg?.props.source)).toContain('>Corrigir o login<tspan class="kc"> · Preparar</tspan></text>')
+      expect(String(svg?.props.alt)).toContain('Preparar · Reproduzir o bug, 1 de 4, 25%')
     }
     await ui.unmount()
   }
@@ -96,7 +96,7 @@ test('título desconhecido sozinho é negado com a lista numerada dos passos', a
   mundo(on)
   await progresso($, PLANO)
   const negado = await progresso($, { id: 'pub', feitos: ['Passo que não existe'] })
-  expect(negado.deny).toContain('1. Ler briefing | 2. Mapear seções | 3. Montar hero')
+  expect(negado.deny).toContain('1. Ler as issues | 2. Mapear módulos | 3. Escrever testes')
 
   const semBarra = await progresso($, { id: 'outra', proximo: true })
   expect(semBarra.deny).toContain('não existe')
@@ -105,23 +105,23 @@ test('título desconhecido sozinho é negado com a lista numerada dos passos', a
 test('esperando, erro e concluído tocam som e avisam, sem rajada', async ($, on) => {
   const { relogio, sons, toasts } = mundo(on)
   await progresso($, PLANO)
-  await progresso($, { id: 'pub', estado: 'esperando', nota: 'Qual preço?' })
+  await progresso($, { id: 'pub', estado: 'esperando', nota: 'Qual versão?' })
   await relogio.settle()
   expect(sons).toEqual(['sounds/decisao.wav'])
-  expect(toasts.at(-1)).toBe('Esperando você: Publicar página · Qual preço?')
+  expect(toasts.at(-1)).toBe('Esperando você: Corrigir o login · Qual versão?')
 
   await relogio.advance(1000)
-  await progresso($, { id: 'pub', falhou: 'Mapear seções', nota: 'sem acesso' })
+  await progresso($, { id: 'pub', falhou: 'Mapear módulos', nota: 'sem acesso' })
   await relogio.settle()
   expect(sons).toHaveLength(1)
-  expect(toasts.at(-1)).toBe('Erro: Publicar página · sem acesso')
+  expect(toasts.at(-1)).toBe('Erro: Corrigir o login · sem acesso')
 
   await relogio.advance(240_000)
-  const fim = await progresso($, { id: 'pub', feitos: ['Ler briefing', 'Mapear seções', 'Montar hero'], estado: 'concluido' })
+  const fim = await progresso($, { id: 'pub', feitos: ['Ler as issues', 'Mapear módulos', 'Escrever testes'], estado: 'concluido' })
   await relogio.settle()
   expect(fim.result).toBe('3/3 · concluído · sem passo ativo')
   expect(sons.at(-1)).toBe('sounds/concluido.wav')
-  expect(toasts.at(-1)).toBe('Concluído: Publicar página em 4min')
+  expect(toasts.at(-1)).toBe('Concluído: Corrigir o login em 4min')
 })
 
 test('o fim do turno fecha a barra com tudo feito e para a que tem passo aberto', async ($, on) => {
@@ -156,12 +156,12 @@ test('faixa de agente nasce no despacho, mostra a ferramenta e fecha no fim do t
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   await progresso($, PLANO)
   await $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Revisar o hero' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Revisar o README' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'sonnet 5' })).toBeDefined()
 
   for await (const _ of $.turn.step({ turnId: 't2', index: 0, model: 'claude-haiku-4-5-20251001', effort: 'high', messageCount: 1, agentId: 'ag1' }));
@@ -192,7 +192,7 @@ test('faixa de agente nasce no despacho, mostra a ferramenta e fecha no fim do t
   expect(await ui.find({ type: 'Text', text: '0:42' })).toBeDefined()
 
   await relogio.advance(8000)
-  expect(await ui.find({ type: 'Text', text: 'Revisar o hero' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Revisar o README' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -276,22 +276,22 @@ test('o demo de 30 s abre o painel e passa por todos os estados: espera, erro, c
 
   await relogio.advance(6000)
   expect(abertos).toEqual([{ id: 'progresso', title: 'Progresso', columns: 60 }])
-  expect(await ui.find({ type: 'Text', text: /^Esperando você · Qual assunto/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Esperando você · Rodo os e2e/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'aguardando aprovação' })).toBeDefined()
   // O comando aparece sem o "cd <pasta> &&" da frente.
-  expect(await ui.find({ type: 'Text', text: '$ npm run build -- --filter vendas' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '$ npm run build -- --filter docs' })).toBeDefined()
   // Agentes de quatro tipos rodando ao mesmo tempo, cada um com o glifo do tipo (pesquisa, design, leve e leitor).
   for (const glifo of ['⌕', '✎', '◠', '⊙']) expect(await ui.find({ type: 'Text', text: glifo })).toBeDefined()
 
   await relogio.advance(2000)
-  expect(await ui.find({ type: 'Text', text: 'Erro · CRM recusou 12 linhas' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Erro · 12 linhas com data inválida' })).toBeDefined()
   expect((await ui.findAll({ type: 'Button' })).filter(botao => String(botao.props.label).endsWith('100%'))).toHaveLength(1)
 
   await relogio.advance(4000)
   expect(await ui.find({ type: 'Text', text: 'falhou' })).toBeDefined()
 
   await relogio.advance(16_000)
-  expect(toasts.at(-1)).toBe('Concluído: Publicar página de vendas em 27s')
+  expect(toasts.at(-1)).toBe('Concluído: Publicar a versão 2.0 em 27s')
   expect(sons.filter(som => som === 'sounds/decisao.wav')).toHaveLength(1)
   expect(sons).toContain('sounds/erro.wav')
   expect(sons.at(-1)).toBe('sounds/concluido.wav')
@@ -356,18 +356,18 @@ test('a demonstração deixa a barra real como estava, na faixa e no store', asy
   const loja = new Map<string, unknown>()
   const { relogio } = mundo(on, loja)
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-  await progresso($, { id: 'mods', titulo: 'Mods do Claude Code', passos: ['a', 'b', 'c', 'd', 'e'] })
+  await progresso($, { id: 'mods', titulo: 'Atualizar dependências', passos: ['a', 'b', 'c', 'd', 'e'] })
   const ui = await montar($, 'terminal')
 
   await comando($, 'progresso-demo')
   await relogio.advance(1000)
-  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Mods do Claude Code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Atualizar dependências' })).toBeDefined()
 
   await relogio.advance(31_000)
   await relogio.settle()
-  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Mods do Claude Code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Atualizar dependências' })).toBeDefined()
   expect((await progresso($, { id: 'mods', proximo: true })).result).toBe('1/5 · em andamento · ativo: b')
   await relogio.settle()
   const sessoes = loja.get('sessoes') as Record<string, { barras: { id: string }[] }>
@@ -379,7 +379,7 @@ test('/progresso on mostra, off esconde e sem argumento alterna', async ($, on) 
   mundo(on)
   await progresso($, PLANO)
   const ui = await montar($, 'terminal')
-  const visivel = async () => (await ui.find({ type: 'Text', text: 'Publicar página' })) !== undefined
+  const visivel = async () => (await ui.find({ type: 'Text', text: 'Corrigir o login' })) !== undefined
 
   expect((await comando($, 'progresso', 'on')).text).toBe('Barras de progresso visíveis · 1 ativa')
   expect(await visivel()).toBe(true)
@@ -432,7 +432,7 @@ test('a pílula desliza uma vez por mudança de progresso e evento de agente nã
 
   // Agente novo, ferramenta nova e tique do relógio das faixas: a trilha fica com a mesma fonte.
   await $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
   await chamadaDeAgente($, { tool: 'Read', tool_use_id: 'r1', file_path: '/x', agentId: 'ag1' })
@@ -443,10 +443,10 @@ test('a pílula desliza uma vez por mudança de progresso e evento de agente nã
   await ui.unmount()
 })
 
-const PAINEL = { title: 'Revisar o hero', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
+const PAINEL = { title: 'Revisar o README', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
 const CONVERSA: SessionMessage[] = [
-  { role: 'user', text: 'Revise o hero da página de vendas.', toolUses: [] },
-  { role: 'assistant', text: 'Vou ler o arquivo do hero.', toolUses: [{ tool_use_id: 'u1', tool: 'Read', input: { file_path: '/site/hero.tsx' } }] },
+  { role: 'user', text: 'Revise o README do projeto.', toolUses: [] },
+  { role: 'assistant', text: 'Vou ler o README.', toolUses: [{ tool_use_id: 'u1', tool: 'Read', input: { file_path: '/app/README.md' } }] },
 ]
 
 /** O que o painel usa embaixo do mod: lugar para abrir, a conversa do agente, rolagem e envio. */
@@ -473,7 +473,7 @@ function mundoDoPainel(on: On, conversa: SessionMessage[] | { deny: string } = C
 
 const despachar = ($: Engine) =>
   $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
@@ -507,11 +507,11 @@ test('o "abrir" da faixa de agente abre o painel com a conversa dele; faixa de c
     expect(lidos.at(-1)).toBe('ag1')
 
     const painel = await montarPainel($, surface)
-    expect(await painel.find({ type: 'Text', text: 'Revise o hero da página de vendas.' })).toBeDefined()
-    expect(String((await painel.find({ type: 'Markdown' }))?.props.text)).toBe('Vou ler o arquivo do hero.')
-    expect(await painel.find({ type: 'Text', text: '› Read · /site/hero.tsx' })).toBeDefined()
+    expect(await painel.find({ type: 'Text', text: 'Revise o README do projeto.' })).toBeDefined()
+    expect(String((await painel.find({ type: 'Markdown' }))?.props.text)).toBe('Vou ler o README.')
+    expect(await painel.find({ type: 'Text', text: '› Read · /app/README.md' })).toBeDefined()
     expect(await painel.find({ key: 'msg' })).toBeDefined()
-    if (surface === 'desktop') expect(String((await painel.find({ type: 'Svg' }))?.props.alt)).toBe('agente Revisar o hero: em andamento')
+    if (surface === 'desktop') expect(String((await painel.find({ type: 'Svg' }))?.props.alt)).toBe('agente Revisar o README: em andamento')
     await painel.unmount()
   }
 })
@@ -531,7 +531,7 @@ test('linha nova do agente aberto entra na cauda, a de outro agente não, e a ca
   await $.session
     .append({ door: 'response', origin: { kind: 'model', model: 'claude-sonnet-5' }, uuid: 'l3', message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Linha da conversa principal.' }] } })
     .catch(() => undefined)
-  expect(await respostas()).toEqual(['Vou ler o arquivo do hero.', 'Achei o título repetido.'])
+  expect(await respostas()).toEqual(['Vou ler o README.', 'Achei o título repetido.'])
 
   for (let i = 0; i < 205; i++) await linhaDoAgente($, 'ag1', `m${i}`, `Passo ${i}`)
   const cauda = await respostas()
@@ -598,7 +598,7 @@ test('conversa que a sessão não consegue ler vira uma linha no painel, e fecha
   await painel.unmount()
 })
 
-// Correções da crítica final, uma por item.
+// Casos de borda, um por item.
 
 test('1. o envio do usuário no desktop chega como sdk e tira a espera; notificação de tarefa não mexe', async ($, on) => {
   mundo(on)
@@ -607,19 +607,19 @@ test('1. o envio do usuário no desktop chega como sdk e tira a espera; notifica
   await progresso($, { id: 'a', titulo: 'Já feita', passos: ['um'] })
   await progresso($, { id: 'a', estado: 'concluido' })
   await progresso($, { id: 'b', titulo: 'Na espera', passos: ['um'] })
-  await progresso($, { id: 'b', estado: 'esperando', nota: 'qual preço?' })
+  await progresso($, { id: 'b', estado: 'esperando', nota: 'qual versão?' })
   const ui = await montar($, 'terminal')
 
   await $.prompt.submit({ text: 'tarefa terminou', wait: false, origin: { kind: 'task-notification' } })
   expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Esperando você · qual versão?' })).toBeDefined()
 
-  await $.prompt.submit({ text: 'R$ 97', wait: false, origin: { kind: 'sdk' } })
+  await $.prompt.submit({ text: '3.0', wait: false, origin: { kind: 'sdk' } })
   expect(await ui.find({ type: 'Text', text: /Esperando você/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Na espera' })).toBeDefined()
   // A concluída sai da banda só no turno seguinte, e continua endereçável.
   expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
-  await $.turn.start({ text: 'R$ 97', turnId: 't2' })
+  await $.turn.start({ text: '3.0', turnId: 't2' })
   expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeUndefined()
   expect((await progresso($, { id: 'a', nota: 'retomando' })).result).toBe('1/1 · em andamento · sem passo ativo')
   expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
@@ -683,7 +683,7 @@ test('4. agente despachado antes da barra fica embaixo dela, sem barra automáti
   const desktop = await montar($, 'desktop')
   const desenhos = await desenhosDe(desktop)
   expect(desenhos).toHaveLength(3)
-  expect(String(desenhos[0]?.props.source)).toContain('>Publicar página<')
+  expect(String(desenhos[0]?.props.source)).toContain('>Corrigir o login<')
   expect(String(desenhos[1]?.props.source)).toContain('Agente a1')
   expect(String(desenhos[2]?.props.source)).toContain('npm run build')
   expect(desenhos.some(svg => String(svg.props.source).includes('>Agentes<'))).toBe(false)
@@ -721,7 +721,7 @@ test('4b. sem barra principal as faixas aparecem sozinhas com um rótulo, sem tr
   // A barra que chega depois recolhe a faixa: o rótulo sai.
   await progresso($, PLANO)
   const depois = await montar($, 'desktop')
-  expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).toContain('>Publicar página<')
+  expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).toContain('>Corrigir o login<')
   expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).not.toContain('>Agentes<')
   await depois.unmount()
 })
@@ -789,7 +789,7 @@ test('6. a aprovação sai quando a chamada termina, mesmo com outra chamada par
 
 const despacharAgente = ($: Engine) =>
   $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
@@ -879,13 +879,13 @@ test('11. /resume no mesmo processo não leva as barras de uma sessão para a ou
   await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's1' } })
   sessao.id = 's2'
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
 
   // De volta à s1: as barras dela voltam no primeiro envio.
   await $.session.end({ reason: 'resume', sessionId: 's2', resume: { id: 's2' } })
   sessao.id = 's1'
   await $.prompt.submit({ text: 'continua', wait: false, origin: { kind: 'composer' } })
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -897,10 +897,10 @@ test('12. argumento desconhecido do /progresso responde o uso e não mexe na vis
   expect((await comando($, 'progresso', 'xyz')).text).toBe(
     'use /progresso on para mostrar, /progresso off para esconder, /progresso sem nada para alternar ou /progresso painel para o painel lateral.',
   )
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
   await comando($, 'progresso', 'off')
   await comando($, 'progresso', 'xyz')
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -922,10 +922,10 @@ test('13b. sessão nova com o off guardado começa escondida, e o on mostra e gu
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   await progresso($, PLANO)
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
 
   expect((await comando($, 'progresso', 'on')).text).toBe('Barras de progresso visíveis · 1 ativa')
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
   expect(loja.get('oculto')).toBe(false)
   await ui.unmount()
 })
@@ -951,8 +951,8 @@ test('14. o fim da sessão para o demo e fecha o painel do agente aberto', async
   const ui = await montar($, 'terminal')
   await relogio.advance(35_000)
   await relogio.settle()
-  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Importar leads de setembro' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Migrar usuários do CSV' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -989,7 +989,7 @@ test('15. no desktop a trilha vai até o vão antes do %, e as faixas até o fim
   await ui.unmount()
 })
 
-// Correções e ampliação de 2026-10-08: um teste ou mais por critério.
+// Stop, ferramenta e painel: um teste ou mais por critério.
 
 const SEM_FUNDO = { stop_hook_active: false, background_tasks: [] }
 const fimDoTurnoPrincipal = ($: Engine, turnId: string, reason: 'answer' | 'aborted' | 'error' = 'answer') =>
@@ -1003,8 +1003,8 @@ test('A1. o Stop pede uma vez por barra por turno para fechar a barra aberta; ba
   await progresso($, { id: 'pub', proximo: true })
 
   const pedido = await $.classic.Stop(SEM_FUNDO)
-  expect(pedido.block).toContain('"Publicar página" (id pub) está em 1/3')
-  expect(pedido.block).toContain('abertos: Mapear seções | Montar hero')
+  expect(pedido.block).toContain('"Corrigir o login" (id pub) está em 1/3')
+  expect(pedido.block).toContain('abertos: Mapear módulos | Escrever testes')
   expect(pedido.block).toContain('estado "concluido"')
   expect(pedido.block).toContain('"esperando"')
   expect(pedido.block).toContain('falhou')
@@ -1132,18 +1132,18 @@ test('A4. passo casa sem acento, caixa, espaço e pontuação, pelo número ou p
   await progresso($, {
     id: 't',
     titulo: 'Tolerante',
-    etapas: [{ nome: 'A', passos: ['Ler briefing', 'Mapear seções'] }, { nome: 'B', passos: ['Montar hero', 'Montar oferta', 'Publicar'] }],
+    etapas: [{ nome: 'A', passos: ['Ler as issues', 'Mapear módulos'] }, { nome: 'B', passos: ['Escrever testes', 'Escrever docs', 'Publicar'] }],
   })
-  expect((await progresso($, { id: 't', feitos: ['ler  BRIEFING.'] })).result).toBe('1/5 · em andamento · ativo: Mapear seções')
-  expect((await progresso($, { id: 't', feitos: ['mapear secoes'] })).result).toBe('2/5 · em andamento · ativo: Montar hero')
+  expect((await progresso($, { id: 't', feitos: ['ler  AS ISSUES.'] })).result).toBe('1/5 · em andamento · ativo: Mapear módulos')
+  expect((await progresso($, { id: 't', feitos: ['mapear modulos'] })).result).toBe('2/5 · em andamento · ativo: Escrever testes')
   expect((await progresso($, { id: 't', ativo: '5' })).result).toBe('2/5 · em andamento · ativo: Publicar')
-  expect((await progresso($, { id: 't', feitos: ['Montar of'] })).result).toBe('3/5 · em andamento · ativo: Publicar')
+  expect((await progresso($, { id: 't', feitos: ['Escrever d'] })).result).toBe('3/5 · em andamento · ativo: Publicar')
 
   // Prefixo ambíguo não casa: o resto da chamada se aplica e o resultado avisa com os passos.
-  const misto = await progresso($, { id: 't', feitos: ['Montar', 'Publicar'], nota: 'quase' })
+  const misto = await progresso($, { id: 't', feitos: ['Escrever', 'Publicar'], nota: 'quase' })
   expect(misto.deny).toBeUndefined()
   expect(String(misto.result)).toContain('4/5 · em andamento')
-  expect(String(misto.result)).toContain('Aviso: "Montar" não casou com nenhum passo e foi ignorado. Passos: 1. Ler briefing | 2. Mapear seções | 3. Montar hero')
+  expect(String(misto.result)).toContain('Aviso: "Escrever" não casou com nenhum passo e foi ignorado. Passos: 1. Ler as issues | 2. Mapear módulos | 3. Escrever testes')
 
   // Título errado não segura o fechamento.
   const fecha = await progresso($, { id: 't', feitos: ['Passo inventado'], estado: 'concluido' })
@@ -1180,7 +1180,7 @@ test('A5. faixa só se pendura na barra aberta do dono mudada neste turno; o sub
   })
   ui = await montar($, 'desktop')
   const svgs = await fonte(ui)
-  const trilha = svgs.findIndex(svg => svg.includes('>Publicar página<'))
+  const trilha = svgs.findIndex(svg => svg.includes('>Corrigir o login<'))
   expect(svgs.findIndex(svg => svg.includes('Agente novo'))).toBeGreaterThan(trilha)
   expect(svgs.findIndex(svg => svg.includes('Agente neto'))).toBeGreaterThan(trilha)
   // O agente despachado neste turno antes da mudança entra na barra junto: o grupo automático some.
@@ -1233,7 +1233,7 @@ test('A6. a banda não espera mais que 0,8 s o desenho do mod de baixo', async (
   for (let i = 0; i < 24; i++) await relogio.advance(250)
   const ui = await montando
   // A banda saiu no limite, sem o desenho de baixo, que chegou depois.
-  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'desenho de baixo' })).toBeUndefined()
   await ui.unmount()
 })
@@ -1293,11 +1293,11 @@ test('R1. a banda tem uma linha por barra: só o % à direita, sem X/Y, e clicar
     if (surface === 'desktop') {
       // Sem faixa, a banda é a trilha e os dois botões numa linha só: nenhum texto embaixo.
       expect((await ui.findAll({ type: 'Text' })).filter(texto => texto.text !== 'faixa vazia')).toHaveLength(0)
-      expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('>Publicar página<')
+      expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('>Corrigir o login<')
       expect(caixasCom(await ui.drawn(), ['Svg', 'Box']).length).toBe(1)
     } else {
-      expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'Preparar · Mapear seções' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Preparar · Mapear módulos' })).toBeDefined()
     }
     for (const chave of ['painel:pub']) {
       abertos.length = 0
@@ -1361,12 +1361,12 @@ async function cenarioRico($: Engine, on: On) {
 
   await $.turn.start({ text: 'faz', turnId: 't1' })
   await progresso($, {
-    id: 'kit',
-    titulo: 'Lançar o kit de vendas',
+    id: 'rel',
+    titulo: 'Preparar a release 3.0',
     etapas: [
-      { nome: 'Preparar', passos: ['Ler o briefing', 'Pesquisar concorrentes (investigador)'] },
-      { nome: 'Construir', passos: ['Montar a landing (executor)', 'Ler os dados de 2025 (leitor)', 'Escrever o hero (executor-leve)'] },
-      { nome: 'Verificar', passos: ['Testar no app', 'Revisar o kit inteiro (executor-pesado)'] },
+      { nome: 'Preparar', passos: ['Ler o changelog', 'Mapear mudanças da API (investigador)'] },
+      { nome: 'Construir', passos: ['Migrar o CSV (executor)', 'Ler o guia de migração (leitor)', 'Atualizar o changelog (executor-leve)'] },
+      { nome: 'Verificar', passos: ['Testar no app', 'Revisar a release inteira (executor-pesado)'] },
     ],
   })
   const agente = async (id: string, tipo: string, descricao: string, modelo: string, esforco: 'medium' | 'high') => {
@@ -1378,23 +1378,23 @@ async function cenarioRico($: Engine, on: On) {
   }
   const fim = (id: string, reason: 'answer' | 'error') =>
     $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: `t-${id}`, agentId: id, reason })
-  await progresso($, { id: 'kit', proximo: true })
-  await agente('a-inv', 'investigador', 'Pesquisar lançamentos concorrentes', 'claude-opus-5-5', 'medium')
+  await progresso($, { id: 'rel', proximo: true })
+  await agente('a-inv', 'investigador', 'Mapear mudanças da API', 'claude-opus-5-5', 'medium')
   await relogio.advance(17_000)
   await fim('a-inv', 'answer')
-  await progresso($, { id: 'kit', proximo: true })
-  await agente('a-exe', 'executor', 'Montar a landing do kit', 'claude-opus-5-5', 'medium')
+  await progresso($, { id: 'rel', proximo: true })
+  await agente('a-exe', 'executor', 'Migrar o CSV de usuários', 'claude-opus-5-5', 'medium')
   await relogio.advance(18_000)
   await fim('a-exe', 'answer')
-  await progresso($, { id: 'kit', proximo: true })
-  await agente('a-lei', 'leitor', 'Ler os dados de 2025', 'claude-sonnet-5-5', 'medium')
+  await progresso($, { id: 'rel', proximo: true })
+  await agente('a-lei', 'leitor', 'Ler o guia de migração', 'claude-sonnet-5-5', 'medium')
   await relogio.advance(9_000)
   await fim('a-lei', 'error')
-  await progresso($, { id: 'kit', proximo: true })
-  await agente('a-leve', 'executor-leve', 'Escrever o hero', 'claude-sonnet-5-5', 'medium')
-  await $.tool.call({ tool: 'Edit', tool_use_id: 'e1', file_path: '/site/hero.tsx', old_string: 'a', new_string: 'b', agentId: 'a-leve' } as never)
-  await progresso($, { id: 'kit', proximo: true })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm run build -- --filter kit', run_in_background: true })
+  await progresso($, { id: 'rel', proximo: true })
+  await agente('a-leve', 'executor-leve', 'Atualizar o changelog', 'claude-sonnet-5-5', 'medium')
+  await $.tool.call({ tool: 'Edit', tool_use_id: 'e1', file_path: '/app/README.md', old_string: 'a', new_string: 'b', agentId: 'a-leve' } as never)
+  await progresso($, { id: 'rel', proximo: true })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm run build -- --filter docs', run_in_background: true })
   await relogio.advance(26_000)
 
   return { relogio }
@@ -1410,7 +1410,7 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
     const ordem = sequencia(await painel.drawn())
     const onde = (texto: string | RegExp) => ordem.findIndex(item => (typeof texto === 'string' ? item === texto : texto.test(item)))
     // De cima para baixo: título, cartões, Recolher, a linha da tarefa, Passos e os grupos na ordem do contrato.
-    const marcos = ['Lançar o kit de vendas', 'Custo', 'Tokens', 'Tempo', 'Recolher', /^5\/7 · Testar no app/, '▸ Passos · 7', 'Rodando · 2', '▾ Concluídos · 2', 'Falharam · 1', 'Planejados · 1']
+    const marcos = ['Preparar a release 3.0', 'Custo', 'Tokens', 'Tempo', 'Recolher', /^5\/7 · Testar no app/, '▸ Passos · 7', 'Rodando · 2', '▾ Concluídos · 2', 'Falharam · 1', 'Planejados · 1']
     const posicoes = marcos.map(marco => onde(marco))
     expect(posicoes.every(posicao => posicao >= 0)).toBe(true)
     expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes)
@@ -1436,7 +1436,7 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
     expect(await painel.find({ type: 'Text', text: ' Sonnet 5.5 · médio' })).toBeDefined()
     await metrica('Edit', 'ctx 3% · 34k ≈$0.02 0:26')
     expect((await painel.find({ type: 'Text', text: /^pesado$/ }))?.props.color).toBe('#E5533A')
-    expect(await painel.find({ type: 'Text', text: '7. Revisar o kit inteiro' })).toBeDefined()
+    expect(await painel.find({ type: 'Text', text: '7. Revisar a release inteira' })).toBeDefined()
     expect(await painel.find({ type: 'Text', text: ' Opus 5.5 · alto' })).toBeDefined()
     // Ícone de estado: glifo no terminal, Svg de 16 px no desktop; nenhum botão "abrir" na linha.
     if (surface === 'terminal') {
@@ -1448,8 +1448,8 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
       expect(estados).toEqual(['rodando', 'rodando', 'rodando', 'concluído', 'concluído', 'falhou', 'planejado'])
     }
     expect((await painel.findAll({ type: 'Button' })).some(botao => botao.props.label === 'abrir')).toBe(false)
-    expect((await painel.find({ key: 'card:a-inv' }))?.props.label).toBe('Pesquisar lançamentos concorrentes')
-    expect(await painel.find({ type: 'Text', text: 'npm run build -- --filter kit' })).toBeDefined()
+    expect((await painel.find({ key: 'card:a-inv' }))?.props.label).toBe('Mapear mudanças da API')
+    expect(await painel.find({ type: 'Text', text: 'npm run build -- --filter docs' })).toBeDefined()
     // Desktop: os três cartões são Svg com canto arredondado e o valor maior que o rótulo.
     if (surface === 'desktop') {
       const cartoes = (await painel.findAll({ type: 'Svg' })).filter(svg => /^(Custo|Tokens|Tempo): /.test(String(svg.props.alt)))
@@ -1504,7 +1504,7 @@ test('Ícones de linha monocromáticos por tipo e estado, na banda e no painel, 
   // O ícone vem num Svg de 16 px logo antes do número e da faixa.
   const faixas = (await banda.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
   const iconeAntes = (texto: string) => faixas[faixas.findIndex(fonte => fonte.includes(texto)) - 1] ?? ''
-  const doLeve = iconeAntes('Escrever o hero')
+  const doLeve = iconeAntes('Atualizar o changelog')
   expect(doLeve).toContain('class="gi" transform="translate(0 6) scale(0.6667)"')
   expect(doLeve).toContain('M13.5 6.5H23')
   expect(doLeve).toContain('class="ib"')
@@ -1555,7 +1555,7 @@ test('R3. estado vazio: sem agentes nenhum grupo aparece; sem nada, só o aviso'
     const painel = await montarPainelLargo($, surface)
     // Sem agentes nenhum grupo aparece: só o título, os cartões, o Recolher e a linha da tarefa.
     const ordem = sequencia(await painel.drawn())
-    expect(ordem.slice(0, 5)).toEqual(['Publicar página', 'Custo', '—', 'Tokens', '—'])
+    expect(ordem.slice(0, 5)).toEqual(['Corrigir o login', 'Custo', '—', 'Tokens', '—'])
     for (const grupo of ['Rodando', '▾ Concluídos', '▸ Concluídos', 'Falharam', 'Planejados']) {
       expect(ordem.some(item => item.startsWith(grupo))).toBe(false)
     }
@@ -1582,7 +1582,7 @@ test('C. fechado pelo usuário, o painel não abre sozinho de novo nesta sessão
   expect(abertos).toEqual(['progresso', 'progresso'])
 })
 
-test('C. preço e janela pela tabela da skill claude-api; modelo sem preço fica sem ≈$ no cartão', async ($, on) => {
+test('C. preço e janela pela tabela de preços; modelo sem preço fica sem ≈$ no cartão', async ($, on) => {
   const perto = (valor: number | null, alvo: number) => expect(Math.abs((valor ?? Infinity) - alvo) < 1e-9).toBe(true)
   perto(custoDe('claude-sonnet-5-5', USO), 0.018)
   perto(custoDe('claude-opus-5-5[1m]', USO), (1000 * 4 + 2000 * 5 + 30_000 * 0.2 + 500 * 20) / 1e6)
@@ -1605,7 +1605,7 @@ test('C. preço e janela pela tabela da skill claude-api; modelo sem preço fica
 })
 
 
-// --- v3 -------------------------------------------------------------------------------------------------------------
+// --- Desenho ----------------------------------------------------------------------------------------------------
 
 const trilhaDe = async (ui: Awaited<ReturnType<typeof montar>>, titulo: string) =>
   String((await ui.findAll({ type: 'Svg' })).find(svg => String(svg.props.alt).startsWith(`${titulo}:`))?.props.source ?? '')
@@ -1614,8 +1614,8 @@ test('V1. o estado vai dentro da trilha, à direita da pílula, sem linha embaix
   mundo(on)
   await progresso($, { id: 'and', titulo: 'Andando', passos: ['Ler o diff', 'Escrever as notas', 'Revisar'] })
   await progresso($, { id: 'esp', titulo: 'Esperando', passos: ['a', 'b', 'c', 'd'] })
-  await progresso($, { id: 'esp', estado: 'esperando', nota: 'qual preço?' })
-  await progresso($, { id: 'err', titulo: 'Quebrou', passos: ['Baixar', 'Subir no CRM', 'Avisar'] })
+  await progresso($, { id: 'esp', estado: 'esperando', nota: 'qual versão?' })
+  await progresso($, { id: 'err', titulo: 'Quebrou', passos: ['Baixar', 'Gravar no banco', 'Avisar'] })
   await progresso($, { id: 'err', falhou: 'Baixar' })
   // Concluída com pulados: a pílula fica no meio e sobra trilho para o texto à direita.
   await progresso($, { id: 'con', titulo: 'Fechou', passos: ['x', 'y', 'z'] })
@@ -1625,7 +1625,7 @@ test('V1. o estado vai dentro da trilha, à direita da pílula, sem linha embaix
   const andando = await trilhaDe(ui, 'Andando')
   expect(andando).toContain('class="ks">Ler o diff</text>')
   const esperando = await trilhaDe(ui, 'Esperando')
-  expect(esperando).toContain('class="ks">Esperando você · qual preço?</text>')
+  expect(esperando).toContain('class="ks">Esperando você · qual versão?</text>')
   expect(esperando).toContain('M12 4 2 20h20zM12 10.5v4M12 17.5h.01" transform="translate(')
   expect(esperando).toContain('class="ki"')
   expect(esperando).toContain('class="pu"')
@@ -1642,7 +1642,7 @@ test('V1. o estado vai dentro da trilha, à direita da pílula, sem linha embaix
 
   // No terminal o estado segue na mesma linha da barra, como antes.
   const linha = await montar($, 'terminal')
-  expect(await linha.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
+  expect(await linha.find({ type: 'Text', text: 'Esperando você · qual versão?' })).toBeDefined()
   await linha.unmount()
 })
 
@@ -1655,9 +1655,9 @@ test('V1. barra parada mostra "Parou em X/Y" e esperando sem nota "Aguardando in
   await progresso($, { id: 'sem', titulo: 'Sem nota', passos: ['a', 'b'] })
   await progresso($, { id: 'sem', estado: 'esperando' })
   await progresso($, { id: 'longa', titulo: 'Longa', passos: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'] })
-  await progresso($, { id: 'longa', estado: 'esperando', nota: 'Conferir a banda e o painel ao vivo no app desktop, no terminal estreito e no tema escuro antes de instalar a versão nova do plugin em todas as máquinas' })
+  await progresso($, { id: 'longa', estado: 'esperando', nota: 'Conferir a banda e o painel ao vivo no app desktop, no terminal estreito e no tema escuro antes de instalar a versão nova do plugin no terminal e no app' })
   const ui = await montar($, 'desktop')
-  expect(await trilhaDe(ui, 'Publicar página')).toContain('class="ks">Parou em 1/3</text>')
+  expect(await trilhaDe(ui, 'Corrigir o login')).toContain('class="ks">Parou em 1/3</text>')
   expect(await trilhaDe(ui, 'Sem nota')).toContain('class="ks">Aguardando informação</text>')
   const longa = await trilhaDe(ui, 'Longa')
   expect(longa).toMatch(/class="ks">Esperando você · Conferir[^<]*…<\/text>/)
@@ -1667,14 +1667,14 @@ test('V1. barra parada mostra "Parou em X/Y" e esperando sem nota "Aguardando in
 test('V2. a estrela do Claude gira na pílula em andamento, nas faixas de agente e no painel; os outros estados trocam pelo ícone', async ($, on) => {
   await cenarioRico($, on)
   const banda = await montar($, 'desktop')
-  const trilha = await trilhaDe(banda, 'Lançar o kit de vendas')
+  const trilha = await trilhaDe(banda, 'Preparar a release 3.0')
   expect(trilha).toContain('fill="#D97757"')
   expect(trilha).toContain('<g class="eg"><g class="ep">')
   expect(trilha).not.toContain('class="mk sd"')
   // Brilho na parte cheia da barra em andamento.
   expect(trilha).toContain('class="sh"')
   const faixas = (await banda.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
-  expect(faixas.find(fonte => fonte.includes('Escrever o hero'))).toContain('<g class="eg">')
+  expect(faixas.find(fonte => fonte.includes('Atualizar o changelog'))).toContain('<g class="eg">')
   // O comando não é o Claude: fica com o ponto.
   expect(faixas.find(fonte => fonte.includes('npm run build'))).not.toContain('<g class="eg">')
   await banda.unmount()
@@ -1717,7 +1717,7 @@ test('V5. prancheta, terminal com cursor piscando e ícones de passo em Svg no d
 test('V6. passo que falhou é ✕ vermelho no painel, também depois de o plano ser reescrito', async ($, on) => {
   mundo(on)
   await progresso($, PLANO)
-  await progresso($, { id: 'pub', falhou: 'Ler briefing' })
+  await progresso($, { id: 'pub', falhou: 'Ler as issues' })
   await progresso($, { ...PLANO, etapas: [...PLANO.etapas, { nome: 'Verificar', passos: ['Testar'] }] })
   for (const surface of SUPERFICIES) {
     const painel = await montarPainelLargo($, surface)
@@ -1725,7 +1725,7 @@ test('V6. passo que falhou é ✕ vermelho no painel, também depois de o plano 
     if (surface === 'terminal') await painel.press({ key: 'passos' })
     if (surface === 'terminal') {
       expect((await painel.find({ type: 'Text', text: '✕' }))?.props.color).toBe('error')
-      expect((await painel.find({ type: 'Text', text: 'Ler briefing' }))?.props.color).toBe('error')
+      expect((await painel.find({ type: 'Text', text: 'Ler as issues' }))?.props.color).toBe('error')
     } else {
       const falho = (await painel.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'falhou' && svg.props.width === 16 && String(svg.props.source).includes('m15 9-6 6'))
       expect(String(falho?.props.source)).toContain('#E5534B')
@@ -1739,7 +1739,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
   on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5-5', agentId: e.tool_use_id }))
   on('tool.call', { tool: 'Bash' }, ($, e) => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: `bg-${e.tool_use_id}` } }))
   await $.turn.start({ text: 'faz', turnId: 't1' })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'p1', command: 'cd /private/tmp/claude-501/proj && npm test -- --watch', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'p1', command: 'cd /tmp/proj && npm test -- --watch', run_in_background: true })
   await $.tool.call({ tool: 'Bash', tool_use_id: 'p2', command: 'cd "/tmp/com espaço"; npm run dev', run_in_background: true })
   await despacharComo($, 'ag1')
   await $.tool.call({ tool: 'Bash', tool_use_id: 'f1', command: 'npm run lint', run_in_background: true, agentId: 'ag1' } as never)
@@ -1751,7 +1751,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
     return alt
   }
   let alt = await altos()
-  expect(alt).toContain('comando npm test -- --watch em /private/tmp/claude-501/proj: em andamento')
+  expect(alt).toContain('comando npm test -- --watch em /tmp/proj: em andamento')
   expect(alt).toContain('comando npm run dev em /tmp/com espaço: em andamento')
   const terminal = await montar($, 'terminal')
   expect(await terminal.find({ type: 'Text', text: '$ npm test -- --watch' })).toBeDefined()
@@ -1776,7 +1776,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
   ]
   await $.classic.Stop({ stop_hook_active: false, background_tasks: fundo })
   alt = await altos()
-  expect(alt).toContain('comando npm test -- --watch em /private/tmp/claude-501/proj: concluído')
+  expect(alt).toContain('comando npm test -- --watch em /tmp/proj: concluído')
   expect(alt).toContain('comando npm run dev em /tmp/com espaço: em andamento')
   expect(alt).toContain('comando npm run lint: em andamento')
   // Subagente no Stop não mexe.
@@ -1824,7 +1824,7 @@ test('3.3. com os mesmos dados nenhum Svg do painel muda entre dois tiques, nem 
 
 test('robustez: no terminal a 30 colunas nenhuma linha do painel passa da largura', async ($, on) => {
   await cenarioRico($, on)
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'b2', command: 'cd ~/projetos/site-de-vendas && npm run dev', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b2', command: 'cd ~/projetos/app && npm run dev', run_in_background: true })
   const painel = await $.ui.mount({ plugin: 'progresso', surface: 'terminal', component: 'Pane', requestId: 'progresso', props: { ...PAINEL, bodyColumns: 30 } })
   const textos = (await painel.findAll({ type: 'Text' })).map(texto => String(texto.text ?? ''))
   expect(textos.some(texto => texto.startsWith('comando em background ·'))).toBe(true)
@@ -1854,7 +1854,7 @@ test('V6. no Stop, comando de subagente terminado e fora da lista fecha; de suba
 test('calha: o ícone do tipo vem antes do número em agente e comando, nas duas superfícies; nenhum Svg com alt vazio', async ($, on) => {
   await cenarioRico($, on)
   const desktop = await montar($, 'desktop')
-  for (const [texto, tipo, traco] of [['Escrever o hero', 'agente', 'M13.5 6.5H23'], ['npm run build', 'comando', 'm4 17 6-6-6-6']] as const) {
+  for (const [texto, tipo, traco] of [['Atualizar o changelog', 'agente', 'M13.5 6.5H23'], ['npm run build', 'comando', 'm4 17 6-6-6-6']] as const) {
     const linha = caixasCom(await desktop.drawn(), ['Svg', 'Box']).find(caixa => filhos(caixa).some(f => String(f.props?.source ?? '').includes(texto)))
     const [icone, numero, faixa] = filhos(linha)
     expect(icone?.type).toBe('Svg')

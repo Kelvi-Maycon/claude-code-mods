@@ -45,8 +45,8 @@ const MAX_SESSOES = 20
 const MAX_VISTAS = 4
 // Espaço da largura de um dígito: o percentual ocupa sempre três casas.
 const ESPACO_DE_DIGITO = String.fromCharCode(0x2007)
-// A área acima do prompt no app desktop não tem 8 px por coluna: medida nos prints, 908 px com 118 colunas e
-// 874 px com 112 (7,69 a 7,8 px por coluna), e a conta de 8 px estourava a linha (as imagens encolhiam e uma
+// A área acima do prompt no app desktop não tem 8 px por coluna: medida no app, fica entre 7,69 e 7,8 px por
+// coluna, e a conta de 8 px estourava a linha (as imagens encolhiam e uma
 // pílula perdia a borda). A estimativa fica no menor valor medido e só dimensiona os desenhos. A superfície não
 // informa a largura em px (só colunas), então o erro da estimativa não pode virar vão entre a trilha e o
 // percentual: o percentual e o "abrir" vêm logo depois da trilha, e a folga fica na borda externa.
@@ -60,7 +60,7 @@ const SILENCIO_MS = 3000
 // Quanto um nome de ferramenta fica na faixa antes de dar lugar ao seguinte: chamadas paralelas trocavam em milissegundos.
 const TROCA_MS = 1000
 // Quanto a banda espera o desenho dos mods de baixo. A espera em `next` não conta no orçamento de 10 s do hook nesta
-// versão do engine, mas contava numa anterior (um "ran past its 10s budget" em 2.1.288); passado o limite, a banda
+// versão do engine, mas contava em versões anteriores; passado o limite, a banda
 // sai sem o que eles desenham, em vez de não sair. Fica abaixo do tique de 1 s: um desenho que esperasse mais seria
 // substituído pelo do tique seguinte antes de sair.
 const ESPERA_ABAIXO_MS = 800
@@ -462,50 +462,50 @@ async function rodarDemo($: EngineInterface) {
   await limparDemo($)
   await update($, oculto, () => false)
   const A = 'demo-pagina'
-  const B = 'demo-leads'
+  const B = 'demo-csv'
   const C = 'demo-email'
   const D = 'demo-notas'
   const agente = (id: string, titulo: string, tipoAgente: string, modelo: string, esforco: string, ferramenta: string) =>
     abrirFaixa($, { id, tipo: 'agente', titulo, modelo, esforco, ferramenta, barra: A, tipoAgente })
-  const build = comandoLegivel('cd ~/projetos/loja && npm run build -- --filter vendas')
+  const build = comandoLegivel('cd ~/projetos/app && npm run build -- --filter docs')
   const roteiro: [number, () => Promise<unknown>][] = [
     [0, () => abrirPainelProgresso($).catch(() => {})],
     [0, () =>
       atualizar($, {
         id: A,
-        titulo: 'Publicar página de vendas',
+        titulo: 'Publicar a versão 2.0',
         etapas: [
-          { nome: 'Preparar', passos: ['Ler o briefing', 'Pesquisar concorrentes (investigador)'] },
-          { nome: 'Construir', passos: ['Redigir o hero (executor-design)', 'Conferir a oferta (executor-leve)', 'Ler a planilha de preços (leitor)'] },
+          { nome: 'Preparar', passos: ['Ler o changelog', 'Mapear mudanças da API (investigador)'] },
+          { nome: 'Construir', passos: ['Redesenhar a página de docs (executor-design)', 'Conferir os exemplos (executor-leve)', 'Ler o guia de migração (leitor)'] },
           { nome: 'Verificar', passos: ['Testar no celular', 'Revisar tudo (executor-pesado)'] },
         ],
       }, null)],
-    [200, () => atualizar($, { id: B, titulo: 'Importar leads de setembro', passos: ['Baixar a planilha', 'Limpar duplicados', 'Subir no CRM'] }, null)],
-    [400, () => atualizar($, { id: C, titulo: 'Revisar o e-mail de lançamento', passos: ['Ler o rascunho', 'Escolher o assunto', 'Agendar o envio'] }, null)],
+    [200, () => atualizar($, { id: B, titulo: 'Migrar usuários do CSV', passos: ['Ler o CSV', 'Limpar duplicados', 'Gravar no banco'] }, null)],
+    [400, () => atualizar($, { id: C, titulo: 'Rodar a suíte de testes', passos: ['Rodar unitários', 'Escolher o ambiente', 'Rodar e2e'] }, null)],
     [600, () => atualizar($, { id: D, titulo: 'Atualizar notas de versão', passos: ['Ler o diff', 'Escrever', 'Revisar'] }, null)],
     [1000, () => atualizar($, { id: A, proximo: true }, null)],
-    [1200, () => agente('demo-pesquisa', 'Pesquisar concorrentes', 'investigador', 'opus 5.5', 'alto', 'WebSearch')],
-    [1800, () => agente('demo-hero', 'Redigir o hero', 'executor-design', 'sonnet 5.5', 'médio', 'Read')],
+    [1200, () => agente('demo-pesquisa', 'Mapear mudanças da API', 'investigador', 'opus 5.5', 'alto', 'WebSearch')],
+    [1800, () => agente('demo-docs', 'Redesenhar a página de docs', 'executor-design', 'sonnet 5.5', 'médio', 'Read')],
     [2200, () => abrirFaixa($, { id: 'demo-build', tipo: 'comando', titulo: build.titulo, pasta: build.pasta, barra: B })],
-    [2400, () => agente('demo-oferta', 'Conferir a oferta', 'executor-leve', 'haiku 4.5', 'baixo', 'Grep')],
-    [2800, () => agente('demo-precos', 'Ler a planilha de preços', 'leitor', 'sonnet 5.5', 'médio', 'Read')],
+    [2400, () => agente('demo-exemplos', 'Conferir os exemplos', 'executor-leve', 'haiku 4.5', 'baixo', 'Grep')],
+    [2800, () => agente('demo-guia', 'Ler o guia de migração', 'leitor', 'sonnet 5.5', 'médio', 'Read')],
     [3000, () => atualizar($, { id: B, proximo: true }, null)],
     [3200, () => atualizar($, { id: C, proximo: true }, null)],
     [3400, () => atualizar($, { id: D, proximo: true }, null)],
-    [3800, () => mudarFaixa($, 'demo-hero', faixa => ({ ...faixa, ferramenta: 'Edit' }))],
+    [3800, () => mudarFaixa($, 'demo-docs', faixa => ({ ...faixa, ferramenta: 'Edit' }))],
     [4200, () => atualizar($, { id: D, proximo: true }, null)],
-    [4600, () => atualizar($, { id: C, estado: 'esperando', nota: 'Qual assunto vai no e-mail?' }, null)],
-    [5400, () => mudarFaixa($, 'demo-oferta', faixa => ({ ...faixa, ferramenta: 'Bash', aprovacao: true }))],
+    [4600, () => atualizar($, { id: C, estado: 'esperando', nota: 'Rodo os e2e no staging?' }, null)],
+    [5400, () => mudarFaixa($, 'demo-exemplos', faixa => ({ ...faixa, ferramenta: 'Bash', aprovacao: true }))],
     [5800, () => atualizar($, { id: D, estado: 'concluido', proximo: true }, null)],
-    [7000, () => atualizar($, { id: B, falhou: 'Limpar duplicados', nota: 'CRM recusou 12 linhas' }, null)],
-    [7400, () => mudarFaixa($, 'demo-oferta', faixa => ({ ...faixa, aprovacao: false }))],
+    [7000, () => atualizar($, { id: B, falhou: 'Limpar duplicados', nota: '12 linhas com data inválida' }, null)],
+    [7400, () => mudarFaixa($, 'demo-exemplos', faixa => ({ ...faixa, aprovacao: false }))],
     [8000, () => atualizar($, { id: A, proximo: true }, null)],
     [9000, () => fecharFaixas($, faixa => faixa.id === 'demo-pesquisa', 'concluida')],
-    [11000, () => fecharFaixas($, faixa => faixa.id === 'demo-precos', 'falhou')],
-    [13000, () => fecharFaixas($, faixa => faixa.id === 'demo-oferta', 'concluida')],
+    [11000, () => fecharFaixas($, faixa => faixa.id === 'demo-guia', 'falhou')],
+    [13000, () => fecharFaixas($, faixa => faixa.id === 'demo-exemplos', 'concluida')],
     [14000, () => atualizar($, { id: A, proximo: true }, null)],
     [17000, () => fecharFaixas($, faixa => faixa.id === 'demo-build', 'concluida')],
-    [19000, () => fecharFaixas($, faixa => faixa.id === 'demo-hero', 'concluida')],
+    [19000, () => fecharFaixas($, faixa => faixa.id === 'demo-docs', 'concluida')],
     [19500, () => atualizar($, { id: A, proximo: true }, null)],
     [23000, () => atualizar($, { id: A, proximo: true }, null)],
     [27000, () => atualizar($, { id: A, estado: 'concluido', proximo: true }, null)],

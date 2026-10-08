@@ -26,7 +26,7 @@ export const PALETA = {
     pos: '#2F7A36',
     warn: '#946200',
     neg: '#C42B3E',
-    // Preenchimento não é texto: o degradê do cache e o ctx em alerta usam os tons vivos do DS.
+    // Preenchimento não é texto: o degradê do cache e o ctx em alerta usam os tons vivos da paleta.
     g0: '#FF7A6B',
     g1: '#F2B53A',
     g2: '#2F7A36',
@@ -76,7 +76,7 @@ const RELOGIO = '<circle cx="6" cy="6" r="4.75"/><path d="M6 3.6V6l1.6 1.1"/>'
 const LADO_RELOGIO = 12
 
 // Largura estimada do texto, porque o SVG não mede: avanço por letra, em em, da fonte do sistema a 12 px e
-// peso 500 (a que a imagem usa sem as fontes do DS), na mesma tabela da barra de progresso; o 600 é 2,3% mais
+// peso 500 (a que a imagem usa sem essas fontes instaladas), na mesma tabela da barra de progresso; o 600 é 2,3% mais
 // largo. Dígitos tabulares contam todos 0,62. Rótulo mono: 0,6 em mais o espaçamento de .08 em.
 const AVANCOS: [number, string][] = [
   [0.26, 'ij'],
@@ -115,7 +115,7 @@ const letras = (x: number, s: string, classe: string) => `<text x="${n(x)}" y="$
 const fundo = (largura: number, tom: string) =>
   `<rect class="p" data-tom="${tom}" x="0" y="${TOPO}" width="${largura}" height="${ALT_PILULA}" rx="${ALT_PILULA / 2}"/>`
 
-// Ritmo horizontal de toda pílula, com o `gap-inline` (6) do DS: 8 de respiro à esquerda, ícone de 14, 6 até
+// Ritmo horizontal de toda pílula, com um vão de 6 entre os itens: 8 de respiro à esquerda, ícone de 14, 6 até
 // o rótulo, 6 entre rótulo, medidor e valor, e 10 à direita (o valor em negrito pesa mais que o ícone na outra
 // ponta). Apertado assim, a 112 colunas cabem os cinco grupos com todo o dado secundário.
 const ESQ = 8

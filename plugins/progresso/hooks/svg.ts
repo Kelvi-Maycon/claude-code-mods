@@ -1,7 +1,7 @@
 // Estrutura portada de plan-progress (zycck/claude-mods, commit 549ecee6d9), MIT, Kirill Serditov.
 // Licença em ../licenses/plan-progress-LICENSE. Trilha, pílula, marcas, faixas e relógio de rolos vêm de lá;
 // a pílula leva também o título da barra, que na origem fica numa coluna à esquerda da trilha.
-// A pele usa uma paleta própria, a mesma da linha de uso (barra-uso):
+// A pele usa uma paleta própria:
 // trilha e faixas são superfícies `soft` sem contorno, a pílula é um `card` com fio `line` por cima da trilha,
 // o preenchido é a textura de pixels que cintila na cor do estado (a da origem), laranja só no que está ativo e cor
 // de estado na marca, na palavra e no fundo tingido de cada faixa.

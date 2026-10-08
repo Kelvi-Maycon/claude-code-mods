@@ -94,7 +94,7 @@ const envia = (
 ) => $.prompt.submit({ text, wait: false, origin: COMPOSER, ...extra })
 
 test('/cache-frio: nada antes do turno, minutos enquanto quente, frio depois', async ($, on) => {
-  const { clock } = mundo(on, { tokens: 212_400 })
+  const { clock } = mundo(on, { tokens: 212_000 })
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   expect(await estado($)).toBe('sem turno nesta sessão ainda')
 
@@ -110,7 +110,7 @@ test('/cache-frio: nada antes do turno, minutos enquanto quente, frio depois', a
 })
 
 test('quente não avisa', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 212_400 })
+  const { clock, visto } = mundo(on, { tokens: 212_000 })
   await turno($)
   await clock.advance(59 * MINUTO)
 
@@ -120,7 +120,7 @@ test('quente não avisa', async ($, on) => {
 })
 
 test('frio, ctx > 100k, sem anexo: segura uma vez, devolve o texto e o segundo envio passa', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 286_609 })
+  const { clock, visto } = mundo(on, { tokens: 287_000 })
   await turno($)
   await clock.advance(75 * MINUTO)
 
@@ -136,13 +136,13 @@ test('frio, ctx > 100k, sem anexo: segura uma vez, devolve o texto e o segundo e
 
   // Ainda no mesmo período frio (o turno não terminou): não avisa de novo.
   await clock.advance(10 * MINUTO)
-  expect(await envia($, 'deu certo ai? acabou?')).toEqual({ text: 'deu certo ai? acabou?' })
-  expect(visto.enviados).toEqual(['outro texto qualquer', 'deu certo ai? acabou?'])
+  expect(await envia($, 'qual o status?')).toEqual({ text: 'qual o status?' })
+  expect(visto.enviados).toEqual(['outro texto qualquer', 'qual o status?'])
   expect(visto.toasts).toEqual([])
 })
 
 test('frio: segundo envio depois de 3 minutos é segurado de novo', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 200_849 })
+  const { clock, visto } = mundo(on, { tokens: 201_000 })
   await turno($)
   await clock.advance(61 * MINUTO)
 
@@ -153,7 +153,7 @@ test('frio: segundo envio depois de 3 minutos é segurado de novo', async ($, on
 })
 
 test('frio com anexo passa, só com toast, uma vez', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 200_849 })
+  const { clock, visto } = mundo(on, { tokens: 201_000 })
   await turno($)
   await clock.advance(90 * MINUTO)
 
@@ -167,7 +167,7 @@ test('frio com anexo passa, só com toast, uma vez', async ($, on) => {
 })
 
 test('frio com o campo recusando o texto: passa com toast, nunca segura', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 200_849, campoAceita: false })
+  const { clock, visto } = mundo(on, { tokens: 201_000, campoAceita: false })
   await turno($)
   await clock.advance(90 * MINUTO)
 
@@ -178,7 +178,7 @@ test('frio com o campo recusando o texto: passa com toast, nunca segura', async 
 // O app desktop roda a engine como host SDK: `prompt.fill` recusa com no_composer, então o envio nunca é
 // segurado (segurar sem devolver o texto perderia o que o usuário digitou). Só o toast avisa, uma vez.
 test('app desktop (no_composer): o envio sdk passa com toast, e o seguinte passa sem outro', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 200_849, semCampo: true })
+  const { clock, visto } = mundo(on, { tokens: 201_000, semCampo: true })
   await turno($, undefined, 'desktop')
   await clock.advance(90 * MINUTO)
 
@@ -193,7 +193,7 @@ test('app desktop (no_composer): o envio sdk passa com toast, e o seguinte passa
 })
 
 test('origem que não é composer passa, e prompt digitado sobre turno rodando também', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 286_609 })
+  const { clock, visto } = mundo(on, { tokens: 287_000 })
   await turno($)
   await clock.advance(120 * MINUTO)
 
@@ -220,7 +220,7 @@ test('ctx < 100k passa', async ($, on) => {
 })
 
 test('depois de compactar o ctx zera e o envio passa', async ($, on) => {
-  const { clock, visto } = mundo(on, { tokens: 286_609 })
+  const { clock, visto } = mundo(on, { tokens: 287_000 })
   await turno($)
   await clock.advance(120 * MINUTO)
   await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'oi', toolUses: [] }] })
@@ -232,7 +232,7 @@ test('depois de compactar o ctx zera e o envio passa', async ($, on) => {
 })
 
 test('/cache-frio: estado, ttl e off', async ($, on) => {
-  const { clock } = mundo(on, { tokens: 286_609 })
+  const { clock } = mundo(on, { tokens: 287_000 })
   await turno($)
   const roda = (args: string) => comando($, args)
 
@@ -281,8 +281,8 @@ test('retomada no mesmo processo, sem session.start: o envio restaura e é segur
   await $.session.end({ reason: 'resume', sessionId: 'sessao-a', resume: { id: 'sessao-a' } })
   await clock.advance(120 * MINUTO)
 
-  expect((await envia($, 'deu certo ai? acabou?')).drop).toBeDefined()
-  expect(visto.devolvidos).toEqual(['deu certo ai? acabou?'])
+  expect((await envia($, 'qual o status?')).drop).toBeDefined()
+  expect(visto.devolvidos).toEqual(['qual o status?'])
 })
 
 test('compactar e relançar: o ctx guardado também zera', async ($, on) => {

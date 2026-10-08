@@ -14,9 +14,8 @@ const visivel = atom({ plugin: 'barra-uso', key: 'visivel' } as const, true)
 const LIMITE_CTX_PADRAO = 275_000
 const COR_TERMINAL: Record<Cor, string | undefined> = { orange: undefined, pos: 'success', warn: 'warning', neg: 'error' }
 
-// A área acima do prompt no app desktop não tem 8 px por coluna: medida nos prints, 908 px com 118 colunas e
-// 874 px com 112 (7,69 a 7,8 px por coluna), e a conta de 8 px estourava a linha (as imagens encolhiam e uma
-// pílula perdia a borda). A estimativa fica no menor valor medido e só dimensiona os desenhos; a borda direita
+// A área acima do prompt no app desktop não tem 8 px por coluna: medida no app, fica entre 7,69 e 7,8 px por
+// coluna, e a conta de 8 px estourava a linha (as imagens encolhiam e uma pílula perdia a borda). A estimativa fica no menor valor medido e só dimensiona os desenhos; a borda direita
 // vem do layout, que absorve a folga.
 const larguraUtil = (colunas: number) => Math.max(320, Math.floor(colunas * 7.69) - 2)
 

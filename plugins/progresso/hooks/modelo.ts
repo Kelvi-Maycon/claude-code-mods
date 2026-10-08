@@ -753,7 +753,7 @@ export function perfilDoArquivo(texto: string): { nome: string; perfil: Perfil }
 /** "opus 5.5 · médio" vira "Opus 5.5 · médio", como o painel mostra. */
 export const comMaiuscula = (texto: string) => texto.charAt(0).toUpperCase() + texto.slice(1)
 
-/** O tipo de agente no fim do título de um passo ("Revisar o kit (executor-pesado)"), e o título sem ele. */
+/** O tipo de agente no fim do título de um passo ("Revisar a release (executor-pesado)"), e o título sem ele. */
 export function tipoDoPasso(titulo: string, tipos: readonly string[]) {
   const achado = /^(.*?)\s*\(([\w:-]+)\)\s*$/.exec(titulo)
   if (!achado) return undefined

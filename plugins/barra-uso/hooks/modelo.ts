@@ -11,7 +11,7 @@ const CTX_ALERTA = 0.85
 export const SEM_DADO = '–'
 
 export type Tom = 'cinco' | 'sete' | 'ctx' | 'cache'
-/** Tokens de cor do DS: `orange` no uso normal, `pos`, `warn` e `neg` para estado. */
+/** Cores da paleta: `orange` no uso normal, `pos`, `warn` e `neg` para estado. */
 export type Cor = 'orange' | 'pos' | 'warn' | 'neg'
 
 export type Pilula = {

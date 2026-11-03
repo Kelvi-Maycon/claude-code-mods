@@ -4,19 +4,19 @@ import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 import type { Cache, Limite, Uso } from '../types'
 import { extras, linha, partes, pilulas, rotuloDs, semExtra, texto } from './modelo'
 import type { Cor } from './modelo'
-import { RESPIRO, linhaDoUso } from './svg'
+import { ALTURA, MEDIDOR_MIN_COLUNAS, RESPIRO, linhaDoUso } from './svg'
 
 const VAZIO: Uso = { cincoHoras: null, seteDias: null, ctx: null, cache: null, agora: 0 }
 const uso = atom({ plugin: 'barra-uso', key: 'uso' } as const, VAZIO)
 const visivel = atom({ plugin: 'barra-uso', key: 'visivel' } as const, true)
+const pedidoAnotacoes = atom({ plugin: 'barra-uso', key: 'anotacoes' } as const, 0)
 
-// Ponto de compactação automática presumido quando a API não informa limite nem janela.
+// Ponto de compactação automática da configuração do usuário, para quando a API não informa limite nem janela.
 const LIMITE_CTX_PADRAO = 275_000
 const COR_TERMINAL: Record<Cor, string | undefined> = { orange: undefined, pos: 'success', warn: 'warning', neg: 'error' }
 
-// A área acima do prompt no app desktop não tem 8 px por coluna: medida no app, fica entre 7,69 e 7,8 px por
-// coluna, e a conta de 8 px estourava a linha (as imagens encolhiam e uma pílula perdia a borda). A estimativa fica no menor valor medido e só dimensiona os desenhos; a borda direita
-// vem do layout, que absorve a folga.
+// A área acima do prompt no app desktop não tem 8 px por coluna (medido de 7,69 a 8,5). A estimativa fica no menor
+// valor medido e só decide quando o dado secundário sai; as larguras vêm do flex do app.
 const larguraUtil = (colunas: number) => Math.max(320, Math.floor(colunas * 7.69) - 2)
 
 // Leitura de um átomo de outro mod. O tipo de `ativo` é do contrato do `ds-primeiro`; redeclarar aqui
@@ -40,6 +40,30 @@ async function alternaDs($: EngineInterface, ligado: boolean) {
     $.ui.toast('Não deu para trocar o DS agora: use /ds on ou /ds off.')
   }
 }
+
+// O botão "Anotações" é do painel do `progresso`, outro mod. A contagem vem do átomo `anotacoes` dele, lido sem tipo
+// como o `ativo` do `ds-primeiro` (o tipo só viria com `dependencies`, que tornaria o progresso obrigatório). Nunca
+// escrito quer dizer que o progresso não carregou, e o botão sai.
+async function quantasAnotacoes($: EngineInterface) {
+  const { value } = await ($.state.get as LeAtomoAlheio)({ plugin: 'progresso', key: 'anotacoes' })
+
+  return Array.isArray(value) ? value.length : undefined
+}
+
+// O clique só escreve o contador deste mod: o progresso ouve a escrita (state.set) e abre ou fecha o painel na hora,
+// sem passar pela fila de comandos nem deixar linha na conversa, como o `/anotacoes` deixaria.
+const pedirAnotacoes = ($: EngineInterface) => update($, pedidoAnotacoes, n => n + 1)
+
+export const rotuloAnotacoes = (n: number) => (n === 0 ? 'Anotações' : `Anotações · ${n}`)
+
+// Caderno (Lucide "notebook-text") na grade de 14 e traço de 1,5 das pílulas, na cor `muted` delas; numa imagem de
+// 22 × 28 (8 px de vão antes), centrado na altura da pílula. Svg não clica: o clique é do Button ao lado.
+const ICONE_ANOTACOES = 22
+const svgDoIconeAnotacoes = (altura: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${ICONE_ANOTACOES}" height="${altura}"><style>.i{fill:none;stroke:#5A5952;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}@media (prefers-color-scheme:dark){.i{stroke:#ABA69B}}</style>` +
+  `<g class="i" transform="translate(8 7) scale(${(14 / 24).toFixed(4)})"><path d="M2 6h4M2 10h4M2 14h4M2 18h4"/><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9.5 8h5M9.5 12H16M9.5 16H14"/></g></svg>`
+// Px que o botão toma da linha das pílulas: o ícone e o rótulo a ~7,7 px por letra mais o respiro do Button.
+const larguraDoBotao = (rotulo: string) => ICONE_ANOTACOES + Math.ceil([...rotulo].length * 7.7) + 16
 
 /** O que aconteceu na conversa principal: um turno começou, ou terminou com este `usage`. */
 type Marca = { turno: 'inicio' } | { turno: 'fim'; usage?: ModelUsage }
@@ -157,22 +181,42 @@ export const register: Register = on => {
     const atual = await read($, uso)
     const lista = pilulas(atual.agora === 0 ? await calcula($, atual, undefined, true) : atual)
     const ds = await dsLigado($)
+    const notas = await quantasAnotacoes($)
+    const rotuloNotas = notas === undefined ? '' : rotuloAnotacoes(notas)
 
     if (e.surface === 'desktop') {
-      const { Box, Svg } = $.ui.resolve(e)
+      const { Box, Button, Svg } = $.ui.resolve(e)
       // Com algo desenhado abaixo (o progresso), a imagem ganha um respiro transparente embaixo: a margem do Box é
       // em linhas de caracteres, grossa demais para os ~12 px que separam os dois blocos.
       const temAbaixo = abaixo !== null && abaixo !== undefined && abaixo !== false
-      const { itens, altura } = linhaDoUso(lista, larguraUtil(e.props.bodyColumns), lista.map(texto), ds, ds === undefined ? '' : rotuloDs(ds), temAbaixo ? RESPIRO : 0)
+      const reserva = notas === undefined ? 0 : larguraDoBotao(rotuloNotas)
+      const linhaUso = linhaDoUso(lista, larguraUtil(e.props.bodyColumns) - reserva, lista.map(texto), ds, ds === undefined ? '' : rotuloDs(ds), temAbaixo ? RESPIRO : 0)
+      const { altura } = linhaUso
 
-      // Uma imagem por grupo, alinhadas à esquerda (cada imagem já traz o vão de 8 px até a próxima); a sobra fica à direita.
-      // No desktop a pílula do DS só mostra o estado (ver `pilulaDs` em svg.ts).
+      // A linha vai de borda a borda: cada pílula é um Box que cresce, com a cabeça (ícone e rótulo) e a cauda (valor e
+      // secundário) na largura natural e o medidor no meio, um Svg sem width num Box de width 0 que estica. A sobra da
+      // linha se divide entre os medidores; DS e Anotações ficam na largura natural, e o botão encosta na borda direita.
       return (
         <Box flexDirection="column">
-          <Box width="100%" flexDirection="row" alignItems="center" justifyContent="flex-start">
-            {itens.map(item => (
-              <Svg key={`uso:${item.key}`} source={item.source} alt={item.alt} width={item.largura} height={altura} />
+          {/* Topo alinhado: as imagens têm a mesma altura e o botão, numa caixa da altura da pílula (28), fica no meio dela. */}
+          <Box width="100%" flexDirection="row" alignItems="flex-start">
+            {linhaUso.pilulas.map(p => (
+              <Box key={`uso:${p.key}`} flexDirection="row" alignItems="flex-start" flexGrow={1}>
+                <Svg key={`uso:${p.key}:cabeca`} source={p.cabeca.source} alt={p.alt} width={p.cabeca.largura} height={altura} />
+                <Box key={`uso:${p.key}:medidor`} flexDirection="column" flexGrow={1} width={0} minWidth={MEDIDOR_MIN_COLUNAS}>
+                  <Svg key={`uso:${p.key}:barra`} source={p.medidor} alt={`medidor ${p.alt}`} height={altura} />
+                </Box>
+                <Svg key={`uso:${p.key}:cauda`} source={p.cauda.source} alt={p.alt} width={p.cauda.largura} height={altura} />
+              </Box>
             ))}
+            {/* No desktop a pílula do DS só mostra o estado (ver `pilulaDs` em svg.ts). */}
+            {linhaUso.ds && <Svg key="uso:ds" source={linhaUso.ds.source} alt={linhaUso.ds.alt} width={linhaUso.ds.largura} height={altura} />}
+            {notas !== undefined && (
+              <Box key="anotacoes" flexDirection="row" alignItems="center" flexShrink={0}>
+                <Svg key="anotacoes:icone" source={svgDoIconeAnotacoes(ALTURA)} alt="anotações" width={ICONE_ANOTACOES} height={ALTURA} />
+                <Button key="anotacoes:abrir" label={rotuloNotas} plain dimColor hover={{ dimColor: false }} onPress={() => void pedirAnotacoes($)} />
+              </Box>
+            )}
           </Box>
           {abaixo}
         </Box>
@@ -186,8 +230,12 @@ export const register: Register = on => {
     )
 
     // Faltando colunas, sai o dado secundário, do último grupo para o primeiro.
+    const botaoNotas = notas !== undefined && (
+      <Button key="anotacoes:abrir" label={rotuloNotas} plain onPress={() => void pedirAnotacoes($)} />
+    )
+    const extraNotas = notas === undefined ? 0 : rotuloNotas.length + 3
     const tentativas = Array.from({ length: extras(lista) + 1 }, (_, sem) => semExtra(lista, sem))
-    const grupos = tentativas.find(l => linha(l, ds).length <= e.props.bodyColumns) ?? tentativas[tentativas.length - 1]!
+    const grupos = tentativas.find(l => linha(l, ds).length + extraNotas <= e.props.bodyColumns) ?? tentativas[tentativas.length - 1]!
 
     return (
       <Box flexDirection="column">
@@ -200,6 +248,8 @@ export const register: Register = on => {
           ])}
           {botaoDs && <Text dimColor>│</Text>}
           {botaoDs}
+          {botaoNotas && <Text dimColor>│</Text>}
+          {botaoNotas}
         </Box>
         {abaixo}
       </Box>

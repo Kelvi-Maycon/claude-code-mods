@@ -4,7 +4,8 @@ import type { ModelUsage, On, PromptOrigin, Register, SessionRateLimit } from 'c
 
 import { falta, linha, pilulas, texto, tokens } from '../hooks/modelo'
 import type { Pilula } from '../hooks/modelo'
-import { ALTURA, PALETA, RESPIRO, TRILHA_MAX, VAO, linhaDoUso } from '../hooks/svg'
+import { ALTURA, MEDIDOR_MIN_COLUNAS, PALETA, RESPIRO, TRILHA_MIN, VAO, linhaDoUso } from '../hooks/svg'
+import type { LinhaDoUso } from '../hooks/svg'
 import type { Uso } from '../types'
 
 const MINUTO = 60_000
@@ -106,29 +107,32 @@ const folhas = (no: No | string): string[] => {
     return [`svg: ${no.props?.alt}`]
   }
 
-  // A linha de uso do desktop é uma imagem por grupo: lida como uma folha só, na ordem.
+  // A linha de uso do desktop: cada grupo (cabeça, medidor e cauda) e o DS lidos como uma folha só, na ordem.
   const filhos = (no.children ?? []).filter((filho): filho is No => typeof filho !== 'string')
-  if (filhos.length > 0 && filhos.every(filho => filho.type === 'Svg')) {
-    return [`svg: ${filhos.map(filho => filho.props?.alt).join(' │ ')}`]
+  // O Svg não guarda a chave na árvore: da linha, só o Box das anotações não é do uso.
+  const doUso = (filho: No) => String(filho.props?.key ?? '').startsWith('uso:') || (filho.type === 'Svg' && filhos.some(f => String(f.props?.key ?? '').startsWith('uso:')))
+  if (filhos.length > 0 && filhos.some(doUso)) {
+    return [`svg: ${filhos.filter(doUso).map(filho => (filho.type === 'Svg' ? filho : svgsDe(filho)[0])?.props?.alt).join(' │ ')}`, ...filhos.filter(f => !doUso(f)).flatMap(folhas)]
   }
 
   return no.type === 'Text' ? [(no.children ?? []).join('')] : (no.children ?? []).flatMap(folhas)
 }
 const svgsDe = (no: No): No[] =>
   no.type === 'Svg' ? [no] : (no.children ?? []).flatMap(filho => (typeof filho === 'string' ? [] : svgsDe(filho)))
-// As imagens da linha como uma fonte só, para buscar classes e textos; e a soma das larguras.
+// As imagens da linha como uma fonte só, para buscar classes e textos; e a soma das larguras fixas (o medidor não tem).
 const svgDe = (no: No) => {
   const todas = svgsDe(no)
 
   return todas.length === 0
     ? undefined
-    : { props: { source: todas.map(svg => String(svg.props?.source)).join(''), width: todas.reduce((soma, svg) => soma + Number(svg.props?.width), 0), height: todas[0]?.props?.height } }
+    : { props: { source: todas.map(svg => String(svg.props?.source)).join(''), width: todas.reduce((soma, svg) => soma + Number(svg.props?.width ?? 0), 0), height: todas[0]?.props?.height } }
 }
-const svgDoUso = (lista: Pilula[], largura: number) =>
-  linhaDoUso(lista, largura, lista.map(texto)).itens.map(item => item.source).join('')
-// Quanto a linha ocupa: a soma das imagens, e cada uma já traz o vão de 8 px até a próxima.
-const ocupa = (lista: Pilula[], largura: number) =>
-  linhaDoUso(lista, largura, lista.map(texto)).itens.reduce((total, item) => total + item.largura, 0)
+const fontes = (r: LinhaDoUso) => [...r.pilulas.flatMap(p => [p.cabeca.source, p.medidor, p.cauda.source]), ...(r.ds ? [r.ds.source] : [])].join('')
+const svgDoUso = (lista: Pilula[], largura: number) => fontes(linhaDoUso(lista, largura, lista.map(texto)))
+// O mínimo da linha: cabeças, caudas (cada uma já traz o vão de 8 px até a próxima), DS e os medidores no mínimo.
+const minimoDa = (r: LinhaDoUso) =>
+  r.pilulas.reduce((soma, p) => soma + p.cabeca.largura + p.cauda.largura + TRILHA_MIN, 0) + (r.ds?.largura ?? 0)
+const ocupa = (lista: Pilula[], largura: number) => minimoDa(linhaDoUso(lista, largura, lista.map(texto)))
 
 
 const USO: Uso = {
@@ -204,7 +208,7 @@ test('sem dado ainda: ctx e cache aparecem com traço, sem barrinha cheia nem se
   expect(svg.match(/>–<\/text>/g)).toHaveLength(2)
 })
 
-const QUANTOS = [5, 5, 5, 3, 2]
+const QUANTOS = [5, 5, 5, 3, 1]
 const ESTREITA = ['20% · 1h38m', '58% · 1d5h', '102%', '0%']
 const tons = (svg: string) => [...svg.matchAll(/data-tom="(\w+)"/g)].map(m => m[1])
 const cheios = (svg: string) => [...svg.matchAll(/<rect class="(tf[ \w]*)"/g)].map(m => m[1])
@@ -220,7 +224,7 @@ test('SVG: grupos com barrinha e valor em toda largura; o secundário sai parte 
     expect(tons(svg)).toEqual(['cinco', 'sete', 'ctx', 'cache'])
     expect(svg.match(/class="tr"/g)).toHaveLength(4)
     expect(cheios(svg)).toEqual(['tf', 'tf', 'tf', 'tf'])
-    expect(svg).toContain('style="fill:url(#dg)"')
+    expect(svg).toContain('style="fill:url(#dg);')
     expect(svg.match(/class="mk"/g)).toHaveLength(2)
 
     for (const valor of ['20%', '58%', '53%', '73%']) {
@@ -231,39 +235,43 @@ test('SVG: grupos com barrinha e valor em toda largura; o secundário sai parte 
   }
 
   const larga = linhaDoUso(lista, 1264, lista.map(texto))
-  const fonteLarga = larga.itens.map(item => item.source).join('')
+  const fonteLarga = fontes(larga)
   expect(presentes(fonteLarga)).toEqual(SECUNDARIOS)
   expect(fonteLarga).toContain('>resta 44m · hit 98%</text>')
-  // 1264 px: o medidor cresce até o teto e a sobra vira vão; acima do vão máximo, a linha fica à esquerda.
-  expect(larga.trilha).toBe(TRILHA_MAX)
-  // 5 h: medidor começando em x=48; o marcador (2 px de largura) centrado a 140/300 dele.
-  const marca = Math.round((48 + TRILHA_MAX * (140 / 300) - 1) * 10) / 10
-  expect(fonteLarga).toContain(`<rect class="tr" x="48" y="11" width="${TRILHA_MAX}"`)
-  expect(fonteLarga).toContain(`<rect class="mk" x="${marca}" y="8" width="2" height="12" rx="1"/>`)
-  expect(larga.itens[0]?.alt).toBe(texto(lista[0]!))
+  // O medidor não tem largura em px: SVG de 100% sem viewBox, trilha em 100%, cheio e marca em %.
+  const medidor5h = larga.pilulas[0]!.medidor
+  expect(medidor5h).toMatch(/^<svg xmlns="http:\/\/www.w3.org\/2000\/svg" width="100%" height="28" role="img"/)
+  expect(medidor5h).not.toContain('viewBox')
+  expect(medidor5h).toContain('<rect class="tr" y="11" width="100%" height="6" rx="3"/>')
+  expect(medidor5h).toContain('<rect class="tf" style="width:max(6px,20%)" y="11" width="20%" height="6" rx="3"/>')
+  expect(medidor5h).toContain(`<svg x="${Math.round(1000 * (140 / 300)) / 10}%" overflow="visible"><rect class="mk" x="-1" y="8" width="2" height="12" rx="1"/></svg>`)
+  expect(larga.pilulas[0]?.alt).toBe(texto(lista[0]!))
+  expect(larga.escala).toBe(1)
 
-  // Vão fixo de 8 px entre as pílulas em qualquer largura: cada imagem, menos a última, leva 8 px a mais que o
-  // desenho (a caixa passa de 8 em 8 pela grade), e a sobra fica à direita da última.
+  // Cabeça e cauda na grade de 8; a cauda leva o vão de 8 até a próxima, menos a do último grupo.
   for (const largura of [704, 844, 960, 1100, 1264]) {
-    const r = linhaDoUso(lista, largura, lista.map(texto))
-    expect(r.vao).toBe(VAO)
     expect(VAO).toBe(8)
     expect(ocupa(lista, largura)).toBeLessThanOrEqual(largura + 0.5)
-    const sol = linhaDoUso(lista, largura, lista.map(texto), true, 'DS')
-    const caixas = sol.itens.map(item => Number(/viewBox="0 0 ([\d.]+) /.exec(item.source)?.[1]))
-    expect(sol.itens.at(-1)?.largura).toBe(caixas.at(-1))
-    expect(caixas.slice(0, -1).every(c => (c - VAO) % 8 === 0)).toBe(true)
+    const sol = linhaDoUso(lista, largura, lista.map(texto))
+    const caixa = (src: string) => Number(/viewBox="0 0 ([\d.]+) /.exec(src)?.[1])
+    expect(sol.pilulas.every(p => caixa(p.cabeca.source) % 8 === 0 && caixa(p.cauda.source) % 8 === 0)).toBe(true)
+    const comDs = linhaDoUso(lista, largura, lista.map(texto), true, 'DS')
+    // O vão transparente é o que a caixa da cauda passa do fundo dela (que começa em -24).
+    const vaoDe = (src: string) => caixa(src) - (Number(/<rect class="p" x="-24" y="2" width="(\d+)"/.exec(src)?.[1]) - 24)
+    expect(sol.pilulas.map(p => vaoDe(p.cauda.source))).toEqual([VAO, VAO, VAO, 0])
+    expect(comDs.pilulas.map(p => vaoDe(p.cauda.source))).toEqual([VAO, VAO, VAO, VAO])
   }
 
-  // Respiro: só com algo abaixo, a imagem ganha 12 px transparentes embaixo, sem mudar a pílula (28 px).
+  // Respiro: só com algo abaixo, as imagens ganham 12 px transparentes embaixo, sem mudar a pílula (28 px).
   const sem = linhaDoUso(lista, 1264, lista.map(texto))
   const com = linhaDoUso(lista, 1264, lista.map(texto), undefined, '', RESPIRO)
   expect(sem.altura).toBe(ALTURA)
   expect(com.altura).toBe(ALTURA + 12)
-  expect(com.itens[0]?.source).toContain(`viewBox="0 0 ${/viewBox="0 0 (\d+) /.exec(sem.itens[0]!.source)![1]} ${ALTURA + 12}"`)
-  expect(com.itens.map(i => i.largura)).toEqual(sem.itens.map(i => i.largura))
+  expect(com.pilulas[0]?.cabeca.source).toContain(`viewBox="0 0 ${sem.pilulas[0]!.cabeca.largura} ${ALTURA + 12}"`)
+  expect(com.pilulas[0]?.medidor).toContain(`height="${ALTURA + 12}"`)
+  expect(com.pilulas.map(p => p.cauda.largura)).toEqual(sem.pilulas.map(p => p.cauda.largura))
 
-  // O secundário sai da última parte para a primeira, nunca pulando uma; nada passa da largura.
+  // O secundário sai da última parte para a primeira, nunca pulando uma; o mínimo nunca passa da largura.
   const quantos = [1264, 1100, 960, 844, 704].map(largura => {
     const svg = svgDoUso(lista, largura)
     expect(presentes(svg)).toEqual(SECUNDARIOS.slice(0, presentes(svg).length))
@@ -273,11 +281,12 @@ test('SVG: grupos com barrinha e valor em toda largura; o secundário sai parte 
   })
   expect(quantos).toEqual(QUANTOS)
 
-  // Abaixo do mínimo dos grupos as imagens encolhem juntas, sem cortar.
+  // Abaixo do mínimo dos grupos, cabeça e cauda encolhem juntas, sem cortar; os medidores ficam no mínimo.
   const minimo = linhaDoUso(lista, 400, lista.map(texto))
-  expect(presentes(minimo.itens.map(item => item.source).join(''))).toEqual([])
-  expect(minimo.itens.reduce((soma, item) => soma + item.largura, 0)).toBeLessThanOrEqual(400)
-  expect(minimo.itens[0]?.source).toMatch(/width="[\d.]+" height="(?!28")[\d.]+" viewBox="0 0 \d+ 28"/)
+  expect(presentes(fontes(minimo))).toEqual([])
+  expect(minimo.escala).toBeLessThan(1)
+  expect(ocupa(lista, 400)).toBeLessThanOrEqual(400 + 0.5)
+  expect(minimo.pilulas[0]?.cabeca.source).toMatch(/width="[\d.]+" height="(?!28")[\d.]+" viewBox="0 0 \d+ 28"/)
 })
 
 test('SVG: a cor do cheio segue o nível do ctx; o cache leva o degradê neg, warn e pos do DS', () => {
@@ -287,17 +296,14 @@ test('SVG: a cor do cheio segue o nível do ctx; o cache leva o degradê neg, wa
   expect(ctxCor(240_000)).toEqual(['tf warn'])
   expect(ctxCor(280_000)).toEqual(['tf neg'])
 
-  // O degradê ocupa a trilha inteira; o cheio vai até a fração que resta.
+  // O degradê ocupa a trilha inteira (0 a 100% do medidor); o cheio vai até a fração que resta.
   const meio = svgDoUso([cacheDe(30)!], 1264)
-  const trilha = /<rect class="tr" x="([\d.]+)" y="\d+" width="(\d+)"/.exec(meio)!
-  const inicio = Number(trilha[1])
-  const largo = Number(trilha[2])
-  expect(meio).toContain(`<linearGradient id="dg" gradientUnits="userSpaceOnUse" x1="${inicio}" x2="${inicio + largo}"`)
+  expect(meio).toContain('<linearGradient id="dg" gradientUnits="userSpaceOnUse" x1="0" x2="100%" y1="0" y2="0">')
   expect(meio).toContain('<stop offset="0" class="g0"/><stop offset=".5" class="g1"/><stop offset="1" class="g2"/>')
-  expect(meio).toContain(`<rect class="tf" style="fill:url(#dg)" x="${inicio}" y="11" width="${largo / 2}"`)
+  expect(meio).toContain('<rect class="tf" style="fill:url(#dg);width:max(6px,50%)" y="11" width="50%"')
   // Frio: barrinha vazia e 0% em neg.
   const frio = svgDoUso([cacheDe(75)!], 1264)
-  expect(frio).not.toContain('url(#dg)" x=')
+  expect(frio).not.toContain('fill:url(#dg);')
   expect(frio).toContain('class="v b neg">0%</text>')
 
   const svg = svgDoUso(pilulas(USO), 1264)
@@ -348,9 +354,27 @@ test('faixa: depois do turno, os quatro grupos em terminal e desktop, com o limi
       const svg = svgDe(desenho)
       expect(folhas(desenho)).toHaveLength(1)
       expect(folhas(desenho)[0]).toEndWith('ctx ▰▰▰▱▱ 53% · 145k/275k │ cache ▰▰▰▰▱ 73% · resta 44m · hit 98%')
-      // Quatro imagens que somam no máximo a área estimada (120 colunas a 7,69 px, menos 2), na altura da linha.
-      expect(svgsDe(desenho)).toHaveLength(4)
+      // Quatro grupos de três imagens (cabeça, medidor e cauda); as fixas somam no máximo a área estimada.
+      expect(svgsDe(desenho)).toHaveLength(12)
       expect(svg?.props?.width).toBeLessThanOrEqual(920)
+      // A linha vai de borda a borda: cada grupo é um Box que cresce, e o medidor é um Svg sem width num Box de width 0
+      // que cresce, com o mínimo em colunas; cabeça e cauda têm largura natural.
+      const linhaDesk = desenho.children?.[0] as No
+      expect(linhaDesk.props).toMatchObject({ width: '100%', flexDirection: 'row' })
+      for (const tom of ['cinco', 'sete', 'ctx', 'cache']) {
+        const grupoDesk = acha(desenho, 'Box', `uso:${tom}`)!
+        expect(grupoDesk.props).toMatchObject({ flexDirection: 'row', flexGrow: 1 })
+        expect(grupoDesk.props?.width).toBeUndefined()
+        const medidorDesk = acha(grupoDesk, 'Box', `uso:${tom}:medidor`)!
+        expect(medidorDesk.props).toMatchObject({ flexGrow: 1, width: 0, minWidth: MEDIDOR_MIN_COLUNAS })
+        const barra = acha(medidorDesk, 'Svg')!
+        expect(barra.props?.width).toBeUndefined()
+        expect(String(barra.props?.source)).toMatch(/^<svg [^>]*width="100%"/)
+        const [cabecaDesk, , caudaDesk] = (grupoDesk.children ?? []) as No[]
+        expect([cabecaDesk?.type, caudaDesk?.type]).toEqual(['Svg', 'Svg'])
+        expect(cabecaDesk?.props?.width).toBeGreaterThan(0)
+        expect(caudaDesk?.props?.width).toBeGreaterThan(0)
+      }
       // Com algo desenhado abaixo, a imagem leva o respiro de 12 px embaixo da pílula de 28.
       expect(svg?.props?.height).toBe(ALTURA + RESPIRO)
       expect(svg?.props?.source).toContain('>145k / 275k</text>')
@@ -587,7 +611,7 @@ test('ds no desktop: pílula só de estado depois do cache, sem camada clicável
   expect(tons(await fonte())).toEqual(['cinco', 'sete', 'ctx', 'cache', 'ds'])
   expect(await fonte()).toContain('class="v b pos">on</text>')
   expect(await fonte()).toContain('<circle class="lg"')
-  expect(svgsDe(await desenho())).toHaveLength(5)
+  expect(svgsDe(await desenho())).toHaveLength(13)
   expect(svgDe(await desenho())?.props.width).toBeLessThanOrEqual(920)
   expect(folhas(await desenho())[0]).toEndWith('│ ds on')
   // A camada Client não carregava no app e deixava texto sobre as pílulas: não há mais nenhuma.
@@ -651,4 +675,84 @@ test('ds-primeiro ausente: sem pílula, camada nem botão do DS', async ($, on) 
   }
 
   expect((await comando($, 'on')).text).toEndWith('hit 98%')
+})
+
+// O `progresso` como ele se mostra a este mod: publica `anotacoes` (a lista da conversa) na largada e, a cada escrita
+// do contador `barra-uso.anotacoes`, alterna o painel dele. Inline, sem import: o kit carrega o register à parte.
+const progressoComNotas: Register = on => {
+  on('session.start', async ($, e, next) => {
+    const notas = [1, 2, 3, 4, 5, 6].map(n => ({ titulo: `Aula ${n}`, valor: `https://exemplo.com/curso/aula-${n}`, grupo: 'Curso · páginas', criadaEm: 0 }))
+    await ($.state.set as (ref: { plugin: string; key: string }, value: unknown) => Promise<unknown>)({ plugin: 'progresso', key: 'anotacoes' }, notas)
+
+    return next(e)
+  })
+  on('state.set', { plugin: 'barra-uso', key: 'anotacoes' } as never, async ($, e, next) => {
+    const gravado = await next(e)
+    const ref = { plugin: 'progresso', key: 'aberto' }
+    const { value } = await ($.state.get as (r: typeof ref) => Promise<{ value: unknown }>)(ref)
+    await ($.state.set as (r: typeof ref, v: unknown) => Promise<unknown>)(ref, value !== true)
+    if (value === true) await $.ui.close({ id: 'anotacoes' })
+    else await $.ui.open({ id: 'anotacoes', title: 'Anotações' })
+
+    return gravado
+  })
+}
+const progressoSemNotas: Register = on => {
+  on('session.start', async ($, e, next) => {
+    await ($.state.set as (ref: { plugin: string; key: string }, value: unknown) => Promise<unknown>)({ plugin: 'progresso', key: 'anotacoes' }, [])
+
+    return next(e)
+  })
+}
+
+test('anotações: botão no fim da linha, depois do DS, com a contagem; o clique abre e fecha o painel do progresso', { plugins: [{ name: 'ds-primeiro', register: dsPrimeiro }, { name: 'progresso', register: progressoComNotas }] }, async ($, on) => {
+  const painel: string[] = []
+  on('ui.open', (_$, e) => (painel.push(`abre ${e.id}`), { value: { isPlaced: true } }))
+  on('ui.close', (_$, e) => (painel.push(`fecha ${e.id}`), { value: undefined }))
+  mundo(on, { limites: LIMITES, tokens: 145_000, compactaEm: 275_000 })
+  await inicia($)
+  await turno($, TURNO)
+
+  for (const surface of SUPERFICIES) {
+    const faixa = await $.ui.mount({ ...BANDA, surface })
+    const linha = ((await faixa.drawn()) as No).children?.[0] as No
+    expect(acha(linha, 'Button', 'anotacoes:abrir')?.props).toMatchObject({ label: 'Anotações · 6', plain: true })
+    // Último elemento da linha: depois da pílula do DS (desktop) ou do botão do DS (terminal).
+    const ultimo = linha.children?.at(-1) as No
+    if (surface === 'desktop') {
+      expect(ultimo.props?.key).toBe('anotacoes')
+      expect(acha(ultimo, 'Svg')?.props?.alt).toBe('anotações')
+      expect((linha.children?.at(-2) as No).props?.alt).toBe('ds on')
+      // O botão toma a sua largura da linha: as pílulas mais ele cabem na largura útil.
+      expect(svgDe(linha)!.props.width - 22).toBeLessThanOrEqual(Math.floor(120 * 7.69) - 2 - Math.ceil('Anotações · 6'.length * 7.7) - 16)
+    } else {
+      expect(ultimo.props?.key).toBe('anotacoes:abrir')
+      const tipos = linha.children?.map(filho => (filho as No).type)
+      expect(tipos?.slice(-4)).toEqual(['Text', 'Button', 'Text', 'Button'])
+    }
+    await faixa.press({ key: 'anotacoes:abrir' })
+    await faixa.press({ key: 'anotacoes:abrir' })
+    await faixa.unmount()
+  }
+  expect(painel).toEqual(['abre anotacoes', 'fecha anotacoes', 'abre anotacoes', 'fecha anotacoes'])
+})
+
+test('anotações: sem nenhuma o botão fica como "Anotações"; sem o progresso, some', { plugins: [{ name: 'progresso', register: progressoSemNotas }] }, async ($, on) => {
+  mundo(on, { limites: LIMITES, tokens: 145_000, compactaEm: 275_000 })
+  await inicia($)
+  for (const surface of SUPERFICIES) {
+    const faixa = await $.ui.mount({ ...BANDA, surface })
+    expect(acha((await faixa.drawn()) as No, 'Button', 'anotacoes:abrir')?.props?.label).toBe('Anotações')
+    await faixa.unmount()
+  }
+})
+
+test('anotações: progresso ausente, sem botão', async ($, on) => {
+  mundo(on, { limites: LIMITES, tokens: 145_000, compactaEm: 275_000 })
+  await inicia($)
+  for (const surface of SUPERFICIES) {
+    const faixa = await $.ui.mount({ ...BANDA, surface })
+    expect(acha((await faixa.drawn()) as No, 'Button', 'anotacoes:abrir')).toBeUndefined()
+    await faixa.unmount()
+  }
 })

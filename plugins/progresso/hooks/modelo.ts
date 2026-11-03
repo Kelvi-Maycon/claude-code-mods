@@ -1,4 +1,6 @@
-import type { Barra, Estado, Fala, Faixa, Passo } from '../types'
+import type { Barra, Estado, Fala, Faixa, Passo, Pendencia } from '../types'
+import { ICONES_PENDENCIA } from './icones'
+import type { IconePendencia } from './icones'
 
 /** Quanto tempo uma faixa terminada continua na tela. */
 export const SOME_MS = 6000
@@ -6,11 +8,12 @@ const MAX_PASSOS = 60
 /** Barras finalizadas que a sessão guarda: as mais velhas que isso, ou além da conta, saem. */
 const MAX_FINALIZADAS = 20
 const VIDA_FINALIZADA_MS = 12 * 3_600_000
-const ESTADOS: readonly Estado[] = ['andamento', 'esperando', 'erro', 'concluido']
+const ESTADOS: readonly Estado[] = ['andamento', 'esperando', 'aguardando', 'erro', 'concluido']
 const FINAIS: ReadonlySet<Estado> = new Set(['concluido', 'erro', 'parada'])
 const ROTULO: Record<Estado, string> = {
   andamento: 'em andamento',
   esperando: 'esperando você',
+  aguardando: 'aguardando agente ou background',
   erro: 'erro',
   concluido: 'concluído',
   parada: 'parada',
@@ -18,11 +21,11 @@ const ROTULO: Record<Estado, string> = {
 
 export const finalizada = (barra: Pick<Barra, 'estado'>) => FINAIS.has(barra.estado)
 
-const texto = (valor: unknown, max: number) =>
+export const texto = (valor: unknown, max: number) =>
   typeof valor === 'string' ? valor.replace(/\s+/g, ' ').trim().slice(0, max) : typeof valor === 'number' ? String(valor) : ''
 const chave = (titulo: string) => titulo.toLowerCase()
 /** Sem acento, caixa, espaço nem pontuação: "Mapear seções." e "mapear secoes" casam. */
-const normal = (valor: string) =>
+export const normal = (valor: string) =>
   valor
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -139,7 +142,7 @@ function planoDe(entrada: Record<string, unknown>): Plano | null {
  * O passo que um valor da chamada nomeia: o título sem acento, caixa, espaço e pontuação; senão o número do passo,
  * a partir de 1; senão o único título que começa pelo valor.
  */
-export function acharPasso(passos: Passo[], valor: unknown): Passo | undefined {
+export function acharPasso<T extends { titulo: string }>(passos: T[], valor: unknown): T | undefined {
   const alvo = normal(texto(valor, 120))
   if (!alvo) return undefined
   const exato = passos.find(passo => normal(passo.titulo) === alvo)
@@ -377,7 +380,153 @@ export function textoDoBloqueio(lista: Barra[], ferramenta: string) {
     return `"${barra.titulo}" (id ${barra.id}) está em ${feito}/${total}; abertos: ${cortar(abertos.join(' | '), 300)}.`
   })
 
-  return `Barra de progresso aberta. ${linhas.join(' ')} Antes de encerrar, feche com ${ferramenta}: estado "concluido" (abertos viram pulados), "esperando" se depende do usuário, ou falhou com o passo.`
+  return `Lista de execução aberta. ${linhas.join(' ')} Antes de encerrar, feche com ${ferramenta}: estado "concluido" (abertos viram pulados), "esperando" se depende do usuário, ou falhou com o passo.`
+}
+
+/**
+ * As barras da conversa principal que, neste turno, ficaram esperando, falharam ou fecharam com passo pulado. A que
+ * aguarda agente ou background fica fora: o trabalho dela continua num turno seguinte.
+ */
+export const paraDepois = (lista: Barra[], turno: string) =>
+  lista.filter(
+    barra =>
+      barra.dono === null &&
+      barra.turno === turno &&
+      barra.estado !== 'aguardando' &&
+      (barra.estado === 'esperando' || barra.estado === 'erro' || barra.passos.some(passo => passo.estado === 'pulado' || passo.estado === 'falhou')),
+  )
+
+/**
+ * Nada mais roda (nenhum agente nem comando em background): a barra da conversa principal que aguardava volta a
+ * andamento, com a nota limpa. Devolve a mesma lista quando nenhuma aguardava.
+ */
+export function retomarAguardando(barras: Barra[], agora: number) {
+  if (!barras.some(barra => barra.dono === null && barra.estado === 'aguardando')) return barras
+
+  return barras.map(barra =>
+    barra.dono === null && barra.estado === 'aguardando' ? { ...barra, estado: 'andamento' as const, nota: '', bg: false, atualizadaEm: agora } : barra,
+  )
+}
+
+/** O lembrete do Stop: uma frase, com os títulos das barras. */
+export const textoDoLembrete = (lista: Barra[]) =>
+  `Ficou algo para depois em ${lista.map(barra => `"${barra.titulo}"`).join(', ')}? Registre em \`pendencias\`; se nada ficou, encerre.`
+
+const MAX_PENDENCIAS = 30
+/** O ícone padrão da pendência pela palavra-chave que aparece primeiro no título (o verbo do começo manda); sem nenhuma, espera. */
+const ICONES_DA_PENDENCIA: [RegExp, IconePendencia][] = [
+  [/v[ií]deo|grava|film|edi[cç][aã]o de v/, 'video'],
+  [/automa|integra|webhook|n8n|conect|\bliga/, 'automacao'],
+  [/deploy|publica|\bsubir\b|lan[cç]a/, 'publicar'],
+  [/acesso|senha|login|chave|token|credencia/, 'acesso'],
+  [/pag(ar|amento)|fatura|cobran|boleto|or[cç]amento/, 'pagamento'],
+  [/imagem|foto|arte|design|thumb|capa|criativo/, 'imagem'],
+  [/e-?mail|mensagem|enviar|responder/, 'email'],
+  [/bug|erro|corrig|falha/, 'bug'],
+  [/dado|planilha|relat[oó]rio|m[eé]trica|dashboard/, 'dados'],
+  [/aprova|autoriza|\bok\b|confirma/, 'aprovacao'],
+  [/revis|confer|validar|testar|teste/, 'revisar'],
+  [/prompt|roteiro|copy|texto|documento|briefing|\bdoc\b|legenda|aula/, 'documento'],
+]
+export function iconeDaPendencia(titulo: string): IconePendencia {
+  const minusculo = titulo.toLowerCase()
+  let melhor: { em: number; nome: IconePendencia } = { em: Infinity, nome: 'espera' }
+  for (const [padrao, nome] of ICONES_DA_PENDENCIA) {
+    const em = minusculo.search(padrao)
+    if (em >= 0 && em < melhor.em) melhor = { em, nome }
+  }
+
+  return melhor.nome
+}
+
+// Os emojis das versões anteriores e os apelidos aceitos na chamada, com o nome que valem.
+const APELIDOS: Record<string, IconePendencia> = {
+  '⏳': 'espera', '⌛': 'espera', '🎬': 'video', '🎥': 'video', '🔌': 'automacao', '🚀': 'publicar', '🔑': 'acesso',
+  '💳': 'pagamento', '🎨': 'imagem', '🖼': 'imagem', '✉': 'email', '📧': 'email', '🐞': 'bug', '🐛': 'bug', '📊': 'dados',
+  '📈': 'dados', '👀': 'revisar', '📝': 'documento', '📄': 'documento', '✅': 'aprovacao', '✔': 'aprovacao',
+  relogio: 'espera', clock: 'espera', aguardar: 'espera', plugue: 'automacao', plug: 'automacao', foguete: 'publicar',
+  rocket: 'publicar', deploy: 'publicar', chave: 'acesso', key: 'acesso', cartao: 'pagamento', card: 'pagamento',
+  foto: 'imagem', image: 'imagem', mail: 'email', 'e-mail': 'email', grafico: 'dados', chart: 'dados', olho: 'revisar',
+  eye: 'revisar', revisao: 'revisar', prompt: 'documento', doc: 'documento', texto: 'documento', check: 'aprovacao', ok: 'aprovacao',
+}
+
+/** O nome do ícone: um do conjunto, um apelido ou emoji antigo convertido; o resto (ou nada) sai do título. */
+export function nomeDoIcone(valor: unknown, titulo: string): IconePendencia {
+  const bruto = typeof valor === 'string' ? valor.trim() : ''
+  if (!bruto) return iconeDaPendencia(titulo)
+  const chave = bruto.normalize('NFD').replace(/[\u0300-\u036f\ufe0f]/g, '').toLowerCase()
+  if ((ICONES_PENDENCIA as string[]).includes(chave)) return chave as IconePendencia
+
+  return APELIDOS[chave] ?? APELIDOS[[...bruto][0] ?? ''] ?? iconeDaPendencia(titulo)
+}
+
+/** Pendência gravada por uma versão anterior, ou pela metade, completa; sem título, null. */
+export function comoPendencia(parcial: Partial<Omit<Pendencia, 'icone'>> & { icone?: unknown } | undefined, agora: number): Pendencia | null {
+  const titulo = texto(parcial?.titulo, 120)
+  if (!titulo) return null
+
+  return { titulo, icone: nomeDoIcone(parcial?.icone, titulo), quem: texto(parcial?.quem, 24), criadaEm: parcial?.criadaEm ?? agora }
+}
+
+/** "1. Prompt da aula 4 (você) | 2. ..." ou "nenhuma". */
+export const listaDePendencias = (lista: Pendencia[]) =>
+  lista.length === 0
+    ? 'nenhuma'
+    : lista.map((item, i) => `${i + 1}. ${item.titulo}${item.quem ? ` (${item.quem})` : ''}`).join(' | ')
+
+/** A chamada mexe em pendências: adicionar, resolver ou listar. */
+export const pedePendencias = (entrada: Record<string, unknown>) =>
+  entrada.pendencias !== undefined || entrada.resolver !== undefined || entrada.listar === true
+
+/**
+ * Aplica a parte de pendências de uma chamada: resolve pelo título (como os passos casam) ou número, contados na lista
+ * de antes da chamada, e depois adiciona. Título que já existe atualiza ícone e quem em vez de duplicar.
+ */
+export function aplicarPendencias(
+  lista: Pendencia[],
+  entrada: Record<string, unknown>,
+  agora: number,
+): { negar: string } | { pendencias: Pendencia[]; texto: string; adicionadas: number } {
+  const resolver = entrada.resolver === undefined ? [] : Array.isArray(entrada.resolver) ? entrada.resolver : [entrada.resolver]
+  const novas = entrada.pendencias === undefined ? [] : Array.isArray(entrada.pendencias) ? entrada.pendencias : [entrada.pendencias]
+  const saem = new Set<Pendencia>()
+  const ignorados: string[] = []
+  for (const valor of resolver) {
+    const achada = acharPasso(lista, valor)
+    if (achada) saem.add(achada)
+    else ignorados.push(texto(valor, 120))
+  }
+  let saida = lista.filter(item => !saem.has(item))
+  const adicionadas: string[] = []
+  for (const bruta of novas) {
+    const item = typeof bruta === 'string' ? { titulo: bruta, icone: undefined, quem: undefined } : ((bruta ?? {}) as { titulo?: string; icone?: unknown; quem?: string })
+    const nova = comoPendencia({ titulo: item.titulo, icone: item.icone, quem: item.quem }, agora)
+    if (!nova) continue
+    adicionadas.push(nova.titulo)
+    const igual = saida.find(outra => normal(outra.titulo) === normal(nova.titulo))
+    saida = igual
+      ? saida.map(outra => (outra === igual ? { ...igual, icone: item.icone === undefined ? igual.icone : nova.icone, quem: nova.quem || igual.quem } : outra))
+      : [...saida, nova]
+  }
+  saida = saida.slice(-MAX_PENDENCIAS)
+
+  if (ignorados.length > 0 && saem.size === 0 && adicionadas.length === 0 && entrada.listar !== true) {
+    return { negar: `Nenhuma pendência casou com "${ignorados.join('", "')}". Pendências: ${listaDePendencias(lista)}` }
+  }
+  if (novas.length > 0 && adicionadas.length === 0 && saem.size === 0 && entrada.listar !== true) {
+    return { negar: 'Pendência sem título. Envie pendencias:[{titulo, icone?, quem?}].' }
+  }
+  const feito = [
+    adicionadas.length ? `${adicionadas.length} ${adicionadas.length === 1 ? 'adicionada' : 'adicionadas'}` : '',
+    saem.size ? `${saem.size} ${saem.size === 1 ? 'resolvida' : 'resolvidas'}` : '',
+  ].filter(Boolean)
+  const aviso = ignorados.length ? ` Aviso: ${ignorados.map(nome => `"${nome}"`).join(', ')} não casou com nenhuma pendência.` : ''
+
+  return {
+    pendencias: saida,
+    adicionadas: adicionadas.length,
+    texto: `${feito.length ? `${feito.join(', ')} · ` : ''}Pendências (${saida.length}): ${listaDePendencias(saida)}.${aviso}`,
+  }
 }
 
 const NOTA_DO_FIM = { aborted: 'interrompida', error: 'erro de API', refusal: 'recusa do modelo' } as const
@@ -385,7 +534,8 @@ const NOTA_DO_FIM = { aborted: 'interrompida', error: 'erro de API', refusal: 'r
 /**
  * O fim de um turno da conversa principal. Barra aberta com tudo feito fecha como concluída. Turno interrompido ou
  * morto por erro para a barra em andamento. Turno respondido com passo aberto: com trabalho em background a barra
- * espera por ele; sem nada rodando, para em X/Y. Esperando fica como está.
+ * espera por ele; sem nada rodando, para em X/Y. Esperando fica como está; aguardando fica enquanto algo roda em
+ * background e, sem nada rodando, segue a regra do andamento.
  */
 export function fimDoTurno(
   barras: Barra[],
@@ -401,7 +551,9 @@ export function fimDoTurno(
     let nova: Barra
     if (total > 0 && feito === total) {
       nova = { ...barra, estado: 'concluido', fechadaEm: agora, nota: '', bg: false }
-    } else if (barra.estado !== 'andamento') {
+    } else if (barra.estado === 'aguardando' && emBackground > 0) {
+      return barra
+    } else if (barra.estado !== 'andamento' && barra.estado !== 'aguardando') {
       return barra
     } else if (motivo !== 'answer') {
       nova = { ...barra, estado: 'parada', fechadaEm: agora, nota: NOTA_DO_FIM[motivo], bg: false }
@@ -434,12 +586,12 @@ export function restaurada(barras: Partial<Barra>[], faixas: Partial<Faixa>[], a
 }
 
 /**
- * A barra onde uma faixa nova se pendura: a aberta (andamento ou esperando) do mesmo dono, mudada no turno em curso,
+ * A barra onde uma faixa nova se pendura: a aberta (andamento, esperando ou aguardando) do mesmo dono, mudada no turno em curso,
  * a mais recente. Barra parada, finalizada ou de turno antigo não recebe faixa: ela vai ao grupo automático.
  */
 export function barraParaFaixa(barras: Barra[], dono: string | null, turno: string) {
   const candidatas = barras.filter(
-    barra => barra.dono === dono && (barra.estado === 'andamento' || barra.estado === 'esperando') && barra.turno === turno,
+    barra => barra.dono === dono && (barra.estado === 'andamento' || barra.estado === 'esperando' || barra.estado === 'aguardando') && barra.turno === turno,
   )
 
   return candidatas.sort((a, b) => b.atualizadaEm - a.atualizadaEm)[0]?.id ?? null
@@ -583,9 +735,14 @@ function vistaDaBarra(barra: Barra, faixas: Faixa[], agora: number, emBackground
   const falhou = barra.passos.find(passo => passo.estado === 'falhou')
   const passo = ativo ? [ativo.etapa, ativo.titulo].filter(Boolean).join(' · ') : 'Tudo feito'
   const espera = barra.bg ? (emBackground > 0 ? `aguardando ${emBackground} em background` : barra.nota || 'aguardando background') : ''
+  // Aguardando diz o que espera: os agentes vivos do grupo, senão o background.
+  const vivas = faixas.filter(faixa => faixa.fim === null)
+  const agentes = vivas.filter(faixa => faixa.tipo === 'agente').length
+  const aguarda = agentes > 1 ? `Aguardando ${agentes} agentes` : agentes === 1 || vivas.length === 0 ? 'Aguardando agente' : 'Aguardando background'
   const rotulo: Record<Estado, string> = {
     andamento: [passo, espera].filter(Boolean).join(' · '),
     esperando: ['Esperando você', barra.nota].filter(Boolean).join(' · '),
+    aguardando: [aguarda, barra.nota].filter(Boolean).join(' · '),
     erro: ['Erro', barra.nota || falhou?.titulo].filter(Boolean).join(' · '),
     concluido: `Concluído em ${duracao((barra.fechadaEm ?? agora) - barra.criadaEm)}`,
     parada: ['Parada', barra.nota].filter(Boolean).join(' · '),
@@ -595,6 +752,7 @@ function vistaDaBarra(barra: Barra, faixas: Faixa[], agora: number, emBackground
   const situacao: Record<Estado, string> = {
     andamento: [ativo?.titulo ?? 'Tudo feito', espera].filter(Boolean).join(' · '),
     esperando: barra.nota ? `Esperando você · ${barra.nota}` : 'Aguardando informação',
+    aguardando: [aguarda, barra.nota].filter(Boolean).join(' · '),
     erro: `Falhou: ${falhou?.titulo || barra.nota || 'erro'}`,
     concluido: `Concluído em ${duracao((barra.fechadaEm ?? agora) - barra.criadaEm)}`,
     parada: `Parou em ${feito}/${total}`,
@@ -627,6 +785,7 @@ function vistaAutomatica(tipo: Faixa['tipo'], faixas: Faixa[], agora: number): V
   const rotulo: Record<Estado, string> = {
     andamento: `${ativas} em execução`,
     esperando: 'Aguardando aprovação',
+    aguardando: 'Aguardando',
     erro: `${falhas} com falha`,
     concluido: 'Concluído',
     parada: 'Parado',
@@ -675,7 +834,10 @@ export function vistas(barras: Barra[], faixas: Faixa[], agora: number, turno = 
 /** Grupo automático: só as faixas e um rótulo, sem trilha. */
 export const automatica = (vista: Pick<Vista, 'id'>) => vista.id.startsWith('auto:')
 
-export const percentual = (vista: Pick<Vista, 'feito' | 'total'>) => (vista.total === 0 ? 0 : Math.round((vista.feito / vista.total) * 100))
+/** Quanto da barra está cheio: concluída enche até o fim, mesmo com passos pulados; senão, feitos sobre o total. */
+export const fracaoDe = (vista: Pick<Vista, 'feito' | 'total' | 'tom'>) =>
+  vista.tom === 'concluido' ? 1 : vista.total === 0 ? 0 : Math.min(1, vista.feito / vista.total)
+export const percentual = (vista: Pick<Vista, 'feito' | 'total' | 'tom'>) => Math.round(fracaoDe(vista) * 100)
 
 /** A tarefa do painel: a barra aberta mudada por último; sem ela, a do turno em curso; sem ela, a mais recente. */
 export function barraEmFoco(barras: Barra[], turno: string) {

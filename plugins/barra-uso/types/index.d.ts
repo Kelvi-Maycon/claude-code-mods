@@ -32,6 +32,11 @@ export type Uso = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'barra-uso': { uso: Uso; visivel: boolean }
+    'barra-uso': {
+      uso: Uso
+      visivel: boolean
+      /** Cliques no botão "Anotações": o progresso ouve cada escrita e alterna o painel dele. */
+      anotacoes: number
+    }
   }
 }

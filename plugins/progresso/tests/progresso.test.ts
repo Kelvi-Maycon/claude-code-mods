@@ -2,18 +2,21 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, SessionMessage, ToolCallInput } from 'claude-code'
 
+import { ICONES_PENDENCIA } from '../hooks/icones'
+import { comoPendencia, nomeDoIcone } from '../hooks/modelo'
 import { custoDe, janelaDe } from '../hooks/precos'
-import { desenhoDoTipo } from '../hooks/icones'
-import { nivelDe } from '../hooks/modelo'
+import { ehAprovacao, larguraNativa, ordemDaLinha, previaDasPendencias, svgDasPilulas, tituloCurto } from '../hooks/svg'
+import { larguras } from '../hooks/register'
 
 const FERRAMENTA = 'mcp__progresso__progresso'
 const FAIXA = { hasSurvey: false, isWorking: true, maxRows: 20, bodyColumns: 110, scroll: { offset: 0, bodyRows: 20 }, view: {} }
 const SUPERFICIES = ['terminal', 'desktop'] as const
-// 110 colunas a 7,69 px menos 2 de folga (843), menos os 40 px da coluna do percentual, na grade de 8.
-const LARGURA_DA_TRILHA = 800
+// A trilha das barras no desktop para o `bodyColumns` da faixa: a mesma conta do mod (colunas do engine incluídas).
+const LARGURA_DA_TRILHA = larguras(FAIXA.bodyColumns).trilha
+const RECUO_DA_SETA = 1
 
 /** O mundo embaixo do mod: relógio e store em memória, sons e toasts anotados. */
-function mundo(on: On, loja?: Map<string, unknown>, sessao = { id: 's1' }) {
+function mundo(on: On, loja?: Map<string, unknown>, sessao = { id: 's1' }, debaixo: 'texto' | 'vazio' = 'texto') {
   const relogio = mock.clock(on, { now: 1_000_000 })
   if (loja) {
     on('store.get', ($, e) => ({ value: loja.get(e.key) }))
@@ -34,7 +37,7 @@ function mundo(on: On, loja?: Map<string, unknown>, sessao = { id: 's1' }) {
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('classic.Stop', () => (stop.block ? { block: stop.block } : {}))
   on('prompt.compose', () => ({ sections: [] }))
-  on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'faixa vazia' }))
+  on('ui.render', ($, e) => (debaixo === 'vazio' ? $.ui.resolve(e).Box({ flexDirection: 'column' }) : $.ui.resolve(e).Text({ children: 'faixa vazia' })))
 
   return { relogio, sons, toasts, registradas, stop }
 }
@@ -51,42 +54,60 @@ const chamadaDeAgente = ($: Engine, entrada: ToolCallInput) => $.tool.call(entra
 const comando = ($: Engine, command: string, args = '') =>
   $.command.run({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 110 } })
 
-// Os desenhos da banda sem o ícone da calha (o Svg de 16 px antes do número clicável).
+// Os desenhos da banda sem o ícone da calha (o Svg de 24 px, alt "agente" ou "comando", antes do número clicável).
+const iconeDaCalha = (svg: { props: Record<string, unknown> }) => svg.props.width === 24 && (svg.props.alt === 'agente' || svg.props.alt === 'comando')
 const desenhosDe = async (ui: { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }) =>
-  (await ui.findAll({ type: 'Svg' })).filter(svg => svg.props.width !== 16)
+  (await ui.findAll({ type: 'Svg' })).filter(svg => !iconeDaCalha(svg))
 const montar = ($: Engine, surface: 'terminal' | 'desktop') =>
   $.ui.mount({ plugin: 'progresso', surface, component: 'AbovePrompt', props: FAIXA })
+/** O texto sob o elemento de uma chave na árvore desenhada (o tempo fica num Text, fora dos desenhos). */
+function textoDaChave(arvore: unknown, chave: string): string | undefined {
+  type Nodo = { type?: string; props?: Record<string, unknown>; children?: (Nodo | string)[] }
+  const texto = (no: Nodo | string): string => (typeof no === 'string' ? no : (no.children ?? []).map(texto).join(''))
+  const acha = (no: Nodo | string): string | undefined => {
+    if (typeof no === 'string') return undefined
+    if (no.props?.key === chave) return texto(no)
+    for (const filho of no.children ?? []) {
+      const achado = acha(filho)
+      if (achado !== undefined) return achado
+    }
+    return undefined
+  }
+  return acha(arvore as Nodo)
+}
+/** "m:ss" ou "h:mm:ss" em segundos. */
+const segundosDe = (relogio: string | undefined) => (relogio ?? '').split(':').reduce((soma, parte) => soma * 60 + Number(parte), 0)
 
 const PLANO = {
   id: 'pub',
-  titulo: 'Corrigir o login',
+  titulo: 'Publicar página',
   etapas: [
-    { nome: 'Preparar', passos: ['Ler as issues', 'Mapear módulos'] },
-    { nome: 'Construir', passos: ['Escrever testes'] },
+    { nome: 'Preparar', passos: ['Ler briefing', 'Mapear seções'] },
+    { nome: 'Construir', passos: ['Montar hero'] },
   ],
 }
 
 test('cria a barra, avança com proximo e reescreve o plano preservando os feitos', async ($, on) => {
   mundo(on)
-  expect((await progresso($, PLANO)).result).toBe('0/3 · em andamento · ativo: Ler as issues')
-  expect((await progresso($, { id: 'pub', proximo: true })).result).toBe('1/3 · em andamento · ativo: Mapear módulos')
+  expect((await progresso($, PLANO)).result).toBe('0/3 · em andamento · ativo: Ler briefing')
+  expect((await progresso($, { id: 'pub', proximo: true })).result).toBe('1/3 · em andamento · ativo: Mapear seções')
 
   const reescrito = await progresso($, {
     id: 'pub',
-    etapas: [{ nome: 'Preparar', passos: ['Ler as issues', 'Reproduzir o bug'] }, { nome: 'Construir', passos: ['Escrever testes', 'Escrever docs'] }],
+    etapas: [{ nome: 'Preparar', passos: ['Ler briefing', 'Entrevistar cliente'] }, { nome: 'Construir', passos: ['Montar hero', 'Montar oferta'] }],
   })
-  expect(reescrito.result).toBe('1/4 · em andamento · ativo: Reproduzir o bug')
+  expect(reescrito.result).toBe('1/4 · em andamento · ativo: Entrevistar cliente')
 
   for (const surface of SUPERFICIES) {
     const ui = await montar($, surface)
     if (surface === 'terminal') {
-      expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'Preparar · Reproduzir o bug' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Preparar · Entrevistar cliente' })).toBeDefined()
       expect(String((await ui.find({ key: 'painel:pub' }))?.props.label)).toContain('25%')
     } else {
       const svg = await ui.find({ type: 'Svg' })
-      expect(String(svg?.props.source)).toContain('>Corrigir o login<tspan class="kc"> · Preparar</tspan></text>')
-      expect(String(svg?.props.alt)).toContain('Preparar · Reproduzir o bug, 1 de 4, 25%')
+      expect(String(svg?.props.source)).toContain('>Publicar página<tspan class="kc"> · Preparar</tspan></text>')
+      expect(String(svg?.props.alt)).toContain('Preparar · Entrevistar cliente, 1 de 4, 25%')
     }
     await ui.unmount()
   }
@@ -96,32 +117,55 @@ test('título desconhecido sozinho é negado com a lista numerada dos passos', a
   mundo(on)
   await progresso($, PLANO)
   const negado = await progresso($, { id: 'pub', feitos: ['Passo que não existe'] })
-  expect(negado.deny).toContain('1. Ler as issues | 2. Mapear módulos | 3. Escrever testes')
+  expect(negado.deny).toContain('1. Ler briefing | 2. Mapear seções | 3. Montar hero')
 
   const semBarra = await progresso($, { id: 'outra', proximo: true })
   expect(semBarra.deny).toContain('não existe')
 })
 
+test('cartão do app que espera o usuário toca o som de decisão; recap sem pergunta e subagente não', async ($, on) => {
+  const { relogio, sons, toasts } = mundo(on)
+  on('tool.call', () => ({ result: 'ok' }))
+  const chamar = (entrada: Record<string, unknown>) => $.tool.call({ tool_use_id: `c${(chamadas += 1)}`, ...entrada } as ToolCallInput)
+
+  await chamar({ tool: 'mcp__ccd_turn__wrap_up', recap: 'Pronto.' })
+  await chamar({ tool: 'mcp__ccd_session__start_session', initiation: 'own_initiative', title: 'Outra' })
+  await chamar({ tool: 'mcp__ccd_turn__wrap_up', recap: 'Pronto.', ask: 'Posso commitar?', agentId: 'ag1' })
+  await relogio.settle()
+  expect(sons).toEqual([])
+
+  await chamar({ tool: 'mcp__ccd_turn__wrap_up', recap: 'Pronto.', ask: 'Posso commitar?' })
+  await relogio.settle()
+  expect(sons).toEqual(['sounds/decisao.wav'])
+  expect(toasts.at(-1)).toBe('Esperando você: Posso commitar?')
+
+  await relogio.advance(4000)
+  await chamar({ tool: 'ExitPlanMode' })
+  await relogio.settle()
+  expect(sons).toHaveLength(2)
+  expect(toasts.at(-1)).toBe('Esperando você: aprovar o plano')
+})
+
 test('esperando, erro e concluído tocam som e avisam, sem rajada', async ($, on) => {
   const { relogio, sons, toasts } = mundo(on)
   await progresso($, PLANO)
-  await progresso($, { id: 'pub', estado: 'esperando', nota: 'Qual versão?' })
+  await progresso($, { id: 'pub', estado: 'esperando', nota: 'Qual preço?' })
   await relogio.settle()
   expect(sons).toEqual(['sounds/decisao.wav'])
-  expect(toasts.at(-1)).toBe('Esperando você: Corrigir o login · Qual versão?')
+  expect(toasts.at(-1)).toBe('Esperando você: Publicar página · Qual preço?')
 
   await relogio.advance(1000)
-  await progresso($, { id: 'pub', falhou: 'Mapear módulos', nota: 'sem acesso' })
+  await progresso($, { id: 'pub', falhou: 'Mapear seções', nota: 'sem acesso' })
   await relogio.settle()
   expect(sons).toHaveLength(1)
-  expect(toasts.at(-1)).toBe('Erro: Corrigir o login · sem acesso')
+  expect(toasts.at(-1)).toBe('Erro: Publicar página · sem acesso')
 
   await relogio.advance(240_000)
-  const fim = await progresso($, { id: 'pub', feitos: ['Ler as issues', 'Mapear módulos', 'Escrever testes'], estado: 'concluido' })
+  const fim = await progresso($, { id: 'pub', feitos: ['Ler briefing', 'Mapear seções', 'Montar hero'], estado: 'concluido' })
   await relogio.settle()
   expect(fim.result).toBe('3/3 · concluído · sem passo ativo')
-  expect(sons.at(-1)).toBe('sounds/concluido.wav')
-  expect(toasts.at(-1)).toBe('Concluído: Corrigir o login em 4min')
+  expect(sons).not.toContain('sounds/concluido.wav')
+  expect(toasts.at(-1)).toBe('Concluído: Publicar página em 4min')
 })
 
 test('o fim do turno fecha a barra com tudo feito e para a que tem passo aberto', async ($, on) => {
@@ -156,12 +200,12 @@ test('faixa de agente nasce no despacho, mostra a ferramenta e fecha no fim do t
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   await progresso($, PLANO)
   await $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Revisar o README' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Revisar o hero' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'sonnet 5' })).toBeDefined()
 
   for await (const _ of $.turn.step({ turnId: 't2', index: 0, model: 'claude-haiku-4-5-20251001', effort: 'high', messageCount: 1, agentId: 'ag1' }));
@@ -178,13 +222,18 @@ test('faixa de agente nasce no despacho, mostra a ferramenta e fecha no fim do t
   expect(await ui.find({ type: 'Text', text: 'aguardando aprovação' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Read' })).toBeDefined()
 
-  // No desktop o relógio conta dentro do SVG: o segundo que passa não troca a fonte da faixa nem repete animação.
+  // No desktop o tempo da faixa é um Text ao lado do desenho: o segundo que passa muda o texto e não troca a fonte
+  // da faixa (trocar a imagem a cada segundo piscava).
   const desktop = await montar($, 'desktop')
   const faixaDesenhada = async () => String((await desenhosDe(desktop))[1]?.props.source)
+  const tempoDaFaixa = async () => segundosDe(textoDaChave(await desktop.drawn(), 'tempo:pub:ag1'))
   const primeira = await faixaDesenhada()
+  const t0 = await tempoDaFaixa()
   expect(primeira).toContain('class="sw andamento">Read</tspan></text>')
+  expect(primeira).not.toContain('--d:')
   await relogio.advance(3000)
   expect(await faixaDesenhada()).toBe(primeira)
+  expect(await tempoDaFaixa()).toBe(t0 + 3)
   await desktop.unmount()
   await relogio.advance(39_000)
   await $.turn.complete({ answer: 'feito', durationMs: 42_000, isAborted: false, turnId: 't2', agentId: 'ag1', reason: 'answer' })
@@ -192,7 +241,7 @@ test('faixa de agente nasce no despacho, mostra a ferramenta e fecha no fim do t
   expect(await ui.find({ type: 'Text', text: '0:42' })).toBeDefined()
 
   await relogio.advance(8000)
-  expect(await ui.find({ type: 'Text', text: 'Revisar o README' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Revisar o hero' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -215,7 +264,9 @@ test('comando em background abre a faixa e a notificação da tarefa fecha', asy
       expect(desenhos[0]?.props.height).toBe(20)
       expect(String(desenhos[1]?.props.source)).toContain('npm run build')
       expect(desenhos[1]?.props.height).toBe(24)
-      expect(desenhos[0]?.props.width).toBe(LARGURA_DA_TRILHA)
+      // Sem width: o rótulo e a faixa esticam até a coluna da direita (Box em coluna com flexGrow).
+      expect(desenhos[0]?.props.width).toBeUndefined()
+      expect(desenhos[1]?.props.width).toBeUndefined()
       expect(await ui.find({ type: 'Text', text: '  0%' })).toBeUndefined()
     }
     await ui.unmount()
@@ -263,8 +314,8 @@ test('a barra não tem ✕: /progresso-limpar remove a barra e a regra entra no 
     model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [FERRAMENTA], outputStyle: null, traits: [],
   })
   const regra = prompt.sections.find(secao => secao.id === 'progresso:lista')
-  expect(regra?.text).toContain('mostrar o plano ao usuário')
-  expect(regra?.text.split(/\s+/).length ?? 99).toBeLessThan(75)
+  expect(regra?.text).toContain('lista de execução')
+  expect(regra?.text.split(/\s+/).length ?? 99).toBeLessThan(95)
 })
 
 test('o demo de 30 s abre o painel e passa por todos os estados: espera, erro, conclusão, agentes e comando', async ($, on) => {
@@ -276,25 +327,25 @@ test('o demo de 30 s abre o painel e passa por todos os estados: espera, erro, c
 
   await relogio.advance(6000)
   expect(abertos).toEqual([{ id: 'progresso', title: 'Progresso', columns: 60 }])
-  expect(await ui.find({ type: 'Text', text: /^Esperando você · Rodo os e2e/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Esperando você · Qual assunto/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'aguardando aprovação' })).toBeDefined()
   // O comando aparece sem o "cd <pasta> &&" da frente.
-  expect(await ui.find({ type: 'Text', text: '$ npm run build -- --filter docs' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '$ npm run build -- --filter vendas' })).toBeDefined()
   // Agentes de quatro tipos rodando ao mesmo tempo, cada um com o glifo do tipo (pesquisa, design, leve e leitor).
   for (const glifo of ['⌕', '✎', '◠', '⊙']) expect(await ui.find({ type: 'Text', text: glifo })).toBeDefined()
 
   await relogio.advance(2000)
-  expect(await ui.find({ type: 'Text', text: 'Erro · 12 linhas com data inválida' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Erro · CRM recusou 12 linhas' })).toBeDefined()
   expect((await ui.findAll({ type: 'Button' })).filter(botao => String(botao.props.label).endsWith('100%'))).toHaveLength(1)
 
   await relogio.advance(4000)
   expect(await ui.find({ type: 'Text', text: 'falhou' })).toBeDefined()
 
   await relogio.advance(16_000)
-  expect(toasts.at(-1)).toBe('Concluído: Publicar a versão 2.0 em 27s')
+  expect(toasts.at(-1)).toBe('Concluído: Publicar página de vendas em 27s')
   expect(sons.filter(som => som === 'sounds/decisao.wav')).toHaveLength(1)
   expect(sons).toContain('sounds/erro.wav')
-  expect(sons.at(-1)).toBe('sounds/concluido.wav')
+  expect(sons).not.toContain('sounds/concluido.wav')
 
   await relogio.advance(3000)
   expect(await ui.find({ type: 'Button' })).toBeUndefined()
@@ -356,18 +407,18 @@ test('a demonstração deixa a barra real como estava, na faixa e no store', asy
   const loja = new Map<string, unknown>()
   const { relogio } = mundo(on, loja)
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-  await progresso($, { id: 'mods', titulo: 'Atualizar dependências', passos: ['a', 'b', 'c', 'd', 'e'] })
+  await progresso($, { id: 'mods', titulo: 'Mods do Claude Code', passos: ['a', 'b', 'c', 'd', 'e'] })
   const ui = await montar($, 'terminal')
 
   await comando($, 'progresso-demo')
   await relogio.advance(1000)
-  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Atualizar dependências' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Mods do Claude Code' })).toBeDefined()
 
   await relogio.advance(31_000)
   await relogio.settle()
-  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Atualizar dependências' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Mods do Claude Code' })).toBeDefined()
   expect((await progresso($, { id: 'mods', proximo: true })).result).toBe('1/5 · em andamento · ativo: b')
   await relogio.settle()
   const sessoes = loja.get('sessoes') as Record<string, { barras: { id: string }[] }>
@@ -379,7 +430,7 @@ test('/progresso on mostra, off esconde e sem argumento alterna', async ($, on) 
   mundo(on)
   await progresso($, PLANO)
   const ui = await montar($, 'terminal')
-  const visivel = async () => (await ui.find({ type: 'Text', text: 'Corrigir o login' })) !== undefined
+  const visivel = async () => (await ui.find({ type: 'Text', text: 'Publicar página' })) !== undefined
 
   expect((await comando($, 'progresso', 'on')).text).toBe('Barras de progresso visíveis · 1 ativa')
   expect(await visivel()).toBe(true)
@@ -394,7 +445,7 @@ test('/progresso on mostra, off esconde e sem argumento alterna', async ($, on) 
   await comando($, 'progresso')
   expect(await visivel()).toBe(true)
 
-  // O caso comum: esconde, a barra sai, e mostrar de novo não tem o que mostrar. A resposta diz isso.
+  // O caso do usuário: esconde, a barra sai, e mostrar de novo não tem o que mostrar. A resposta diz isso.
   await comando($, 'progresso', 'off')
   await comando($, 'progresso-limpar')
   expect((await comando($, 'progresso')).text).toBe('Barras de progresso visíveis · nenhuma barra ativa agora')
@@ -432,7 +483,7 @@ test('a pílula desliza uma vez por mudança de progresso e evento de agente nã
 
   // Agente novo, ferramenta nova e tique do relógio das faixas: a trilha fica com a mesma fonte.
   await $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
   await chamadaDeAgente($, { tool: 'Read', tool_use_id: 'r1', file_path: '/x', agentId: 'ag1' })
@@ -443,10 +494,10 @@ test('a pílula desliza uma vez por mudança de progresso e evento de agente nã
   await ui.unmount()
 })
 
-const PAINEL = { title: 'Revisar o README', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
+const PAINEL = { title: 'Revisar o hero', isFocused: true, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as const
 const CONVERSA: SessionMessage[] = [
-  { role: 'user', text: 'Revise o README do projeto.', toolUses: [] },
-  { role: 'assistant', text: 'Vou ler o README.', toolUses: [{ tool_use_id: 'u1', tool: 'Read', input: { file_path: '/app/README.md' } }] },
+  { role: 'user', text: 'Revise o hero da página de vendas.', toolUses: [] },
+  { role: 'assistant', text: 'Vou ler o arquivo do hero.', toolUses: [{ tool_use_id: 'u1', tool: 'Read', input: { file_path: '/site/hero.tsx' } }] },
 ]
 
 /** O que o painel usa embaixo do mod: lugar para abrir, a conversa do agente, rolagem e envio. */
@@ -473,7 +524,7 @@ function mundoDoPainel(on: On, conversa: SessionMessage[] | { deny: string } = C
 
 const despachar = ($: Engine) =>
   $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
@@ -507,11 +558,11 @@ test('o "abrir" da faixa de agente abre o painel com a conversa dele; faixa de c
     expect(lidos.at(-1)).toBe('ag1')
 
     const painel = await montarPainel($, surface)
-    expect(await painel.find({ type: 'Text', text: 'Revise o README do projeto.' })).toBeDefined()
-    expect(String((await painel.find({ type: 'Markdown' }))?.props.text)).toBe('Vou ler o README.')
-    expect(await painel.find({ type: 'Text', text: '› Read · /app/README.md' })).toBeDefined()
+    expect(await painel.find({ type: 'Text', text: 'Revise o hero da página de vendas.' })).toBeDefined()
+    expect(String((await painel.find({ type: 'Markdown' }))?.props.text)).toBe('Vou ler o arquivo do hero.')
+    expect(await painel.find({ type: 'Text', text: '› Read · /site/hero.tsx' })).toBeDefined()
     expect(await painel.find({ key: 'msg' })).toBeDefined()
-    if (surface === 'desktop') expect(String((await painel.find({ type: 'Svg' }))?.props.alt)).toBe('agente Revisar o README: em andamento')
+    if (surface === 'desktop') expect(String((await painel.find({ type: 'Svg' }))?.props.alt)).toBe('agente Revisar o hero: em andamento')
     await painel.unmount()
   }
 })
@@ -531,7 +582,7 @@ test('linha nova do agente aberto entra na cauda, a de outro agente não, e a ca
   await $.session
     .append({ door: 'response', origin: { kind: 'model', model: 'claude-sonnet-5' }, uuid: 'l3', message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Linha da conversa principal.' }] } })
     .catch(() => undefined)
-  expect(await respostas()).toEqual(['Vou ler o README.', 'Achei o título repetido.'])
+  expect(await respostas()).toEqual(['Vou ler o arquivo do hero.', 'Achei o título repetido.'])
 
   for (let i = 0; i < 205; i++) await linhaDoAgente($, 'ag1', `m${i}`, `Passo ${i}`)
   const cauda = await respostas()
@@ -598,31 +649,41 @@ test('conversa que a sessão não consegue ler vira uma linha no painel, e fecha
   await painel.unmount()
 })
 
-// Casos de borda, um por item.
+// Correções da crítica final, uma por item.
 
-test('1. o envio do usuário no desktop chega como sdk e tira a espera; notificação de tarefa não mexe', async ($, on) => {
+test('1. a mensagem do usuário não tira a espera: a barra fica esperando até o modelo mudar e o Stop não a cobra', async ($, on) => {
   mundo(on)
   on('prompt.submit', ($, e) => ({ text: e.text }))
   await $.turn.start({ text: 'faz', turnId: 't1' })
   await progresso($, { id: 'a', titulo: 'Já feita', passos: ['um'] })
   await progresso($, { id: 'a', estado: 'concluido' })
-  await progresso($, { id: 'b', titulo: 'Na espera', passos: ['um'] })
-  await progresso($, { id: 'b', estado: 'esperando', nota: 'qual versão?' })
+  await progresso($, { id: 'b', titulo: 'Na espera', passos: ['um', 'dois'] })
+  await progresso($, { id: 'b', estado: 'esperando', nota: 'qual preço?' })
+  // A barra ficou esperando sem pendência registrada: o lembrete vem uma vez no turno, e só ele.
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe('Ficou algo para depois em "Na espera"? Registre em `pendencias`; se nada ficou, encerre.')
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  await fimDoTurnoPrincipal($, 't1')
   const ui = await montar($, 'terminal')
 
   await $.prompt.submit({ text: 'tarefa terminou', wait: false, origin: { kind: 'task-notification' } })
-  expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Esperando você · qual versão?' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
 
-  await $.prompt.submit({ text: '3.0', wait: false, origin: { kind: 'sdk' } })
-  expect(await ui.find({ type: 'Text', text: /Esperando você/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Na espera' })).toBeDefined()
-  // A concluída sai da banda só no turno seguinte, e continua endereçável.
-  expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
-  await $.turn.start({ text: '3.0', turnId: 't2' })
+  // O envio do usuário (sdk no desktop, composer no terminal) e o turno seguinte deixam a barra como estava.
+  for (const [kind, id] of [['sdk', 't2'], ['composer', 't3']] as const) {
+    await $.prompt.submit({ text: 'R$ 97', wait: false, origin: { kind } })
+    await $.turn.start({ text: 'R$ 97', turnId: id })
+    expect(await ui.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
+    expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+    await fimDoTurnoPrincipal($, id)
+    expect(await ui.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
+  }
+  // A concluída saiu da banda no turno seguinte, e continua endereçável.
   expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeUndefined()
-  expect((await progresso($, { id: 'a', nota: 'retomando' })).result).toBe('1/1 · em andamento · sem passo ativo')
-  expect(await ui.find({ type: 'Text', text: 'Já feita' })).toBeDefined()
+  // O modelo muda a barra: só aí ela volta a andamento e o Stop volta a cobrar.
+  await $.turn.start({ text: 'segue', turnId: 't4' })
+  expect((await progresso($, { id: 'b', proximo: true })).result).toBe('1/2 · em andamento · ativo: dois')
+  expect(await ui.find({ type: 'Text', text: /Esperando você/ })).toBeUndefined()
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toContain('"Na espera" (id b) está em 1/2')
   await ui.unmount()
 })
 
@@ -683,7 +744,7 @@ test('4. agente despachado antes da barra fica embaixo dela, sem barra automáti
   const desktop = await montar($, 'desktop')
   const desenhos = await desenhosDe(desktop)
   expect(desenhos).toHaveLength(3)
-  expect(String(desenhos[0]?.props.source)).toContain('>Corrigir o login<')
+  expect(String(desenhos[0]?.props.source)).toContain('>Publicar página<')
   expect(String(desenhos[1]?.props.source)).toContain('Agente a1')
   expect(String(desenhos[2]?.props.source)).toContain('npm run build')
   expect(desenhos.some(svg => String(svg.props.source).includes('>Agentes<'))).toBe(false)
@@ -721,7 +782,7 @@ test('4b. sem barra principal as faixas aparecem sozinhas com um rótulo, sem tr
   // A barra que chega depois recolhe a faixa: o rótulo sai.
   await progresso($, PLANO)
   const depois = await montar($, 'desktop')
-  expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).toContain('>Corrigir o login<')
+  expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).toContain('>Publicar página<')
   expect(String((await depois.findAll({ type: 'Svg' }))[0]?.props.source)).not.toContain('>Agentes<')
   await depois.unmount()
 })
@@ -789,7 +850,7 @@ test('6. a aprovação sai quando a chamada termina, mesmo com outra chamada par
 
 const despacharAgente = ($: Engine) =>
   $.agent.spawn({
-    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o README', subagentType: 'general-purpose',
+    tool_use_id: 'd1', prompt: 'revise', description: 'Revisar o hero', subagentType: 'general-purpose',
     provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
   })
 
@@ -879,13 +940,13 @@ test('11. /resume no mesmo processo não leva as barras de uma sessão para a ou
   await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's1' } })
   sessao.id = 's2'
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
 
   // De volta à s1: as barras dela voltam no primeiro envio.
   await $.session.end({ reason: 'resume', sessionId: 's2', resume: { id: 's2' } })
   sessao.id = 's1'
   await $.prompt.submit({ text: 'continua', wait: false, origin: { kind: 'composer' } })
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -897,10 +958,10 @@ test('12. argumento desconhecido do /progresso responde o uso e não mexe na vis
   expect((await comando($, 'progresso', 'xyz')).text).toBe(
     'use /progresso on para mostrar, /progresso off para esconder, /progresso sem nada para alternar ou /progresso painel para o painel lateral.',
   )
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
   await comando($, 'progresso', 'off')
   await comando($, 'progresso', 'xyz')
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -922,10 +983,10 @@ test('13b. sessão nova com o off guardado começa escondida, e o on mostra e gu
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   await progresso($, PLANO)
   const ui = await montar($, 'terminal')
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
 
   expect((await comando($, 'progresso', 'on')).text).toBe('Barras de progresso visíveis · 1 ativa')
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
   expect(loja.get('oculto')).toBe(false)
   await ui.unmount()
 })
@@ -951,45 +1012,57 @@ test('14. o fim da sessão para o demo e fecha o painel do agente aberto', async
   const ui = await montar($, 'terminal')
   await relogio.advance(35_000)
   await relogio.settle()
-  expect(await ui.find({ type: 'Text', text: 'Publicar a versão 2.0' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Migrar usuários do CSV' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página de vendas' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Importar leads de setembro' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('15. no desktop a trilha vai até o vão antes do %, e as faixas até o fim da coluna do %; o número abre a conversa', async ($, on) => {
+test('15. no desktop trilha e faixa são Svg sem width esticados até a coluna da direita (7), que fecha no mesmo x nas duas linhas; o número abre a conversa', async ($, on) => {
   mundo(on)
   on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
   await progresso($, PLANO)
   await despachar($)
   const ui = await montar($, 'desktop')
+  const desenhada = await ui.drawn()
   const desenhos = await desenhosDe(ui)
-  const trilha = Number(desenhos[0]?.props.width)
-  const faixa = Number(desenhos[1]?.props.width)
-  // Mesma conta em colunas nas duas linhas: trilha + vão + coluna de 4 do % = ícone 16 + vão + número de 2 + vão +
-  // faixa. Com o número em 3 colunas (24) e a faixa = trilha − 16, a diferença entre os dois fins é 24 − (px de 3 colunas), ~1 px no app.
-  expect(faixa).toBe(trilha - 16)
-  expect(trilha % 8).toBe(0)
-  const pct = caixasCom(await ui.drawn(), ['Button']).find(caixa => caixa.props?.width === 4)
-  expect(pct?.props?.justifyContent).toBe('flex-end')
+  // Nenhuma largura em px: a imagem estica no Box em coluna, que cresce até a coluna da direita.
+  expect(desenhos[0]?.props.width).toBeUndefined()
+  expect(desenhos[1]?.props.width).toBeUndefined()
+  expect(String(desenhos[0]?.props.source)).toContain('width="100%"')
+  expect(String(desenhos[0]?.props.source)).not.toContain('viewBox')
+  expect(String(desenhos[1]?.props.source)).toContain('width="100%"')
+  for (const chave of ['trilha-caixa:pub', 'faixa-caixa:pub:ag1']) {
+    expect(noDaChave(desenhada, chave)?.props).toMatchObject({ flexDirection: 'column', flexGrow: 1, width: 0 })
+    expect(filhos(noDaChave(desenhada, chave)).map(f => f.type)).toEqual(['Svg'])
+  }
+  // Barra: a trilha esticada e a coluna do %, minWidth 7 (a do relógio), presa à direita, "100%" cabe com o respiro.
+  const topo = noDaChave(desenhada, 'topo:pub')
+  expect(topo?.props).toMatchObject({ flexDirection: 'row', alignItems: 'center', columnGap: 1 })
+  expect(filhos(topo).map(f => f.props?.key)).toEqual(['trilha-caixa:pub', 'pct:pub'])
+  const pct = noDaChave(desenhada, 'pct:pub')
+  expect(pct?.props).toMatchObject({ minWidth: 7, flexShrink: 0, justifyContent: 'flex-end' })
+  expect(pct?.props?.width).toBeUndefined()
   expect(filhos(pct)[0]?.props?.label).toContain('0%')
-  const linhaDaBarra = caixasCom(await ui.drawn(), ['Svg', 'Box']).find(caixa => filhos(caixa).length === 2)
-  expect(linhaDaBarra?.props?.columnGap).toBe(1)
   // Nada de "abrir" à direita: o número da calha é o Button, apagado e com realce no hover.
   expect((await ui.findAll({ type: 'Button' })).some(botao => botao.props.label === 'abrir')).toBe(false)
   const numero = await ui.find({ key: 'abrir:ag1' })
   expect(String(numero?.props.label).trim()).toBe('1')
   expect(numero?.props.dimColor).toBe(true)
-  // O realce do hover (hover={{ dimColor: false, bold: true }}) é aplicado pela superfície; a árvore do kit não o expõe.
   expect(String(desenhos[1]?.props.alt)).toContain('abre a conversa')
-  // Linha da faixa: ícone, a coluna fixa de 2 com o número, e a faixa.
-  const linha = caixasCom(await ui.drawn(), ['Svg', 'Box']).find(caixa => filhos(caixa).length === 3)
-  expect(filhos(linha).map(f => f.type)).toEqual(['Svg', 'Box', 'Svg'])
-  expect(filhos(linha)[1]?.props?.width).toBe(3)
+  // Faixa: calha de 24 com o ícone, o número em minWidth 4, a faixa esticada e o relógio na mesma coluna de 7 do %.
+  const linha = noDaChave(desenhada, 'linha:pub:ag1')
+  expect(linha?.props).toMatchObject({ flexDirection: 'row', alignItems: 'center', columnGap: 1 })
+  expect(filhos(linha).map(f => f.type)).toEqual(['Svg', 'Box', 'Box', 'Box'])
+  expect(filhos(linha)[0]?.props).toMatchObject({ width: 24, alt: 'agente' })
+  expect(filhos(linha)[1]?.props).toMatchObject({ minWidth: 4, flexShrink: 0 })
   expect(filhos(filhos(linha)[1])[0]?.type).toBe('Button')
+  expect(filhos(linha)[2]?.props?.key).toBe('faixa-caixa:pub:ag1')
+  expect(filhos(linha)[3]?.props).toMatchObject({ minWidth: pct?.props?.minWidth, flexShrink: 0, justifyContent: 'flex-end' })
+  expect(filhos(filhos(linha)[3])[0]?.type).toBe('Text')
   await ui.unmount()
 })
 
-// Stop, ferramenta e painel: um teste ou mais por critério.
+// Correções e ampliação de 2026-10-08: um teste ou mais por critério.
 
 const SEM_FUNDO = { stop_hook_active: false, background_tasks: [] }
 const fimDoTurnoPrincipal = ($: Engine, turnId: string, reason: 'answer' | 'aborted' | 'error' = 'answer') =>
@@ -1003,8 +1076,8 @@ test('A1. o Stop pede uma vez por barra por turno para fechar a barra aberta; ba
   await progresso($, { id: 'pub', proximo: true })
 
   const pedido = await $.classic.Stop(SEM_FUNDO)
-  expect(pedido.block).toContain('"Corrigir o login" (id pub) está em 1/3')
-  expect(pedido.block).toContain('abertos: Mapear módulos | Escrever testes')
+  expect(pedido.block).toContain('"Publicar página" (id pub) está em 1/3')
+  expect(pedido.block).toContain('abertos: Mapear seções | Montar hero')
   expect(pedido.block).toContain('estado "concluido"')
   expect(pedido.block).toContain('"esperando"')
   expect(pedido.block).toContain('falhou')
@@ -1015,9 +1088,9 @@ test('A1. o Stop pede uma vez por barra por turno para fechar a barra aberta; ba
   expect((await $.classic.Stop({ stop_hook_active: true, background_tasks: [] })).block).toBeUndefined()
   const fundo = [{ id: 'b1', type: 'shell', status: 'running', description: 'npm run build' }]
   expect((await $.classic.Stop({ stop_hook_active: false, background_tasks: fundo })).block).toBeUndefined()
-  // O bloqueio de um hook de Stop do settings.json vale sozinho, sem o do mod por cima.
-  stop.block = 'Rode os testes antes de encerrar.'
-  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe('Rode os testes antes de encerrar.')
+  // O bloqueio de um hook do settings (o verifica do usuário) vale sozinho, sem o do mod por cima.
+  stop.block = 'Falta Verificado:'
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe('Falta Verificado:')
   stop.block = undefined
   // Faixa de agente rodando também conta como background.
   await despacharComo($, 'a1')
@@ -1075,7 +1148,7 @@ test('A1. turno interrompido ou com erro de API para a barra; tudo feito fecha e
 
   const ui = await montar($, 'terminal')
   expect(await ui.find({ type: 'Text', text: /Concluído em/ })).toBeDefined()
-  expect(sons).toContain('sounds/concluido.wav')
+  expect(sons).not.toContain('sounds/concluido.wav')
   await ui.unmount()
   // As paradas guardam o motivo: a atualização seguinte responde a partir delas.
   expect((await progresso($, { id: 'i', nota: 'retomo' })).result).toBe('0/2 · em andamento · ativo: um')
@@ -1085,7 +1158,7 @@ test('A1. turno interrompido ou com erro de API para a barra; tudo feito fecha e
   expect((await progresso($, { id: 'e', nota: 'de novo' })).result).toContain('em andamento')
 })
 
-test('A2. concluido com passos abertos marca pulados: a % é feitos/total e a banda mostra os pulados', async ($, on) => {
+test('A2. concluido com passos abertos marca pulados: a barra enche até 100% e os pulados ficam na contagem', async ($, on) => {
   mundo(on)
   await progresso($, { id: 'p', titulo: 'Cinco passos', passos: ['a', 'b', 'c', 'd', 'e'] })
   await progresso($, { id: 'p', proximo: true })
@@ -1096,11 +1169,10 @@ test('A2. concluido com passos abertos marca pulados: a % é feitos/total e a ba
   // A banda não mostra mais a contagem nem os pulados: só o % (os pulados ficam no painel e na ferramenta).
   expect(await terminal.find({ key: 'contagem:p' })).toBeUndefined()
   expect(await terminal.find({ type: 'Text', text: /pulado/ })).toBeUndefined()
-  expect(String((await terminal.find({ key: 'painel:p' }))?.props.label)).toContain('60%')
-  expect(String((await terminal.find({ key: 'painel:p' }))?.props.label)).not.toContain('100%')
+  expect(String((await terminal.find({ key: 'painel:p' }))?.props.label)).toContain('100%')
   await terminal.unmount()
   const desktop = await montar($, 'desktop')
-  expect(String((await desktop.find({ type: 'Svg' }))?.props.alt)).toContain('3 de 5, 60%')
+  expect(String((await desktop.find({ type: 'Svg' }))?.props.alt)).toContain('3 de 5, 100%')
   expect(await desktop.find({ key: 'contagem:p' })).toBeUndefined()
   await desktop.unmount()
   // Reaberta, os pulados voltam a abertos.
@@ -1132,18 +1204,18 @@ test('A4. passo casa sem acento, caixa, espaço e pontuação, pelo número ou p
   await progresso($, {
     id: 't',
     titulo: 'Tolerante',
-    etapas: [{ nome: 'A', passos: ['Ler as issues', 'Mapear módulos'] }, { nome: 'B', passos: ['Escrever testes', 'Escrever docs', 'Publicar'] }],
+    etapas: [{ nome: 'A', passos: ['Ler briefing', 'Mapear seções'] }, { nome: 'B', passos: ['Montar hero', 'Montar oferta', 'Publicar'] }],
   })
-  expect((await progresso($, { id: 't', feitos: ['ler  AS ISSUES.'] })).result).toBe('1/5 · em andamento · ativo: Mapear módulos')
-  expect((await progresso($, { id: 't', feitos: ['mapear modulos'] })).result).toBe('2/5 · em andamento · ativo: Escrever testes')
+  expect((await progresso($, { id: 't', feitos: ['ler  BRIEFING.'] })).result).toBe('1/5 · em andamento · ativo: Mapear seções')
+  expect((await progresso($, { id: 't', feitos: ['mapear secoes'] })).result).toBe('2/5 · em andamento · ativo: Montar hero')
   expect((await progresso($, { id: 't', ativo: '5' })).result).toBe('2/5 · em andamento · ativo: Publicar')
-  expect((await progresso($, { id: 't', feitos: ['Escrever d'] })).result).toBe('3/5 · em andamento · ativo: Publicar')
+  expect((await progresso($, { id: 't', feitos: ['Montar of'] })).result).toBe('3/5 · em andamento · ativo: Publicar')
 
   // Prefixo ambíguo não casa: o resto da chamada se aplica e o resultado avisa com os passos.
-  const misto = await progresso($, { id: 't', feitos: ['Escrever', 'Publicar'], nota: 'quase' })
+  const misto = await progresso($, { id: 't', feitos: ['Montar', 'Publicar'], nota: 'quase' })
   expect(misto.deny).toBeUndefined()
   expect(String(misto.result)).toContain('4/5 · em andamento')
-  expect(String(misto.result)).toContain('Aviso: "Escrever" não casou com nenhum passo e foi ignorado. Passos: 1. Ler as issues | 2. Mapear módulos | 3. Escrever testes')
+  expect(String(misto.result)).toContain('Aviso: "Montar" não casou com nenhum passo e foi ignorado. Passos: 1. Ler briefing | 2. Mapear seções | 3. Montar hero')
 
   // Título errado não segura o fechamento.
   const fecha = await progresso($, { id: 't', feitos: ['Passo inventado'], estado: 'concluido' })
@@ -1180,7 +1252,7 @@ test('A5. faixa só se pendura na barra aberta do dono mudada neste turno; o sub
   })
   ui = await montar($, 'desktop')
   const svgs = await fonte(ui)
-  const trilha = svgs.findIndex(svg => svg.includes('>Corrigir o login<'))
+  const trilha = svgs.findIndex(svg => svg.includes('>Publicar página<'))
   expect(svgs.findIndex(svg => svg.includes('Agente novo'))).toBeGreaterThan(trilha)
   expect(svgs.findIndex(svg => svg.includes('Agente neto'))).toBeGreaterThan(trilha)
   // O agente despachado neste turno antes da mudança entra na barra junto: o grupo automático some.
@@ -1233,7 +1305,7 @@ test('A6. a banda não espera mais que 0,8 s o desenho do mod de baixo', async (
   for (let i = 0; i < 24; i++) await relogio.advance(250)
   const ui = await montando
   // A banda saiu no limite, sem o desenho de baixo, que chegou depois.
-  expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'desenho de baixo' })).toBeUndefined()
   await ui.unmount()
 })
@@ -1269,8 +1341,8 @@ test('A8. a descrição da ferramenta e a regra pedem para fechar a barra antes 
     model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [FERRAMENTA], outputStyle: null, traits: [],
   })
   const regra = prompt.sections.find(secao => secao.id === 'progresso:lista')?.text ?? ''
-  expect(regra).toContain('Antes de encerrar o turno, feche-a')
-  expect(regra.split(/\s+/).length).toBeLessThan(75)
+  expect(regra).toContain('Antes de encerrar o turno, feche a barra')
+  expect(regra.split(/\s+/).length).toBeLessThan(95)
 })
 
 test('R1. a banda tem uma linha por barra: só o % à direita, sem X/Y, e clicar nele abre o painel', async ($, on) => {
@@ -1293,11 +1365,11 @@ test('R1. a banda tem uma linha por barra: só o % à direita, sem X/Y, e clicar
     if (surface === 'desktop') {
       // Sem faixa, a banda é a trilha e os dois botões numa linha só: nenhum texto embaixo.
       expect((await ui.findAll({ type: 'Text' })).filter(texto => texto.text !== 'faixa vazia')).toHaveLength(0)
-      expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('>Corrigir o login<')
-      expect(caixasCom(await ui.drawn(), ['Svg', 'Box']).length).toBe(1)
+      expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('>Publicar página<')
+      expect(caixasCom(await ui.drawn(), ['Svg']).length).toBe(1)
     } else {
-      expect(await ui.find({ type: 'Text', text: 'Corrigir o login' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'Preparar · Mapear módulos' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Publicar página' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Preparar · Mapear seções' })).toBeDefined()
     }
     for (const chave of ['painel:pub']) {
       abertos.length = 0
@@ -1361,12 +1433,12 @@ async function cenarioRico($: Engine, on: On) {
 
   await $.turn.start({ text: 'faz', turnId: 't1' })
   await progresso($, {
-    id: 'rel',
-    titulo: 'Preparar a release 3.0',
+    id: 'kit',
+    titulo: 'Lançar o kit de vendas',
     etapas: [
-      { nome: 'Preparar', passos: ['Ler o changelog', 'Mapear mudanças da API (investigador)'] },
-      { nome: 'Construir', passos: ['Migrar o CSV (executor)', 'Ler o guia de migração (leitor)', 'Atualizar o changelog (executor-leve)'] },
-      { nome: 'Verificar', passos: ['Testar no app', 'Revisar a release inteira (executor-pesado)'] },
+      { nome: 'Preparar', passos: ['Ler o briefing', 'Pesquisar concorrentes (investigador)'] },
+      { nome: 'Construir', passos: ['Montar a landing (executor)', 'Ler os dados de 2025 (leitor)', 'Escrever o hero (executor-leve)'] },
+      { nome: 'Verificar', passos: ['Testar no app', 'Revisar o kit inteiro (executor-pesado)'] },
     ],
   })
   const agente = async (id: string, tipo: string, descricao: string, modelo: string, esforco: 'medium' | 'high') => {
@@ -1378,23 +1450,23 @@ async function cenarioRico($: Engine, on: On) {
   }
   const fim = (id: string, reason: 'answer' | 'error') =>
     $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: `t-${id}`, agentId: id, reason })
-  await progresso($, { id: 'rel', proximo: true })
-  await agente('a-inv', 'investigador', 'Mapear mudanças da API', 'claude-opus-5-5', 'medium')
+  await progresso($, { id: 'kit', proximo: true })
+  await agente('a-inv', 'investigador', 'Pesquisar lançamentos concorrentes', 'claude-opus-5-5', 'medium')
   await relogio.advance(17_000)
   await fim('a-inv', 'answer')
-  await progresso($, { id: 'rel', proximo: true })
-  await agente('a-exe', 'executor', 'Migrar o CSV de usuários', 'claude-opus-5-5', 'medium')
+  await progresso($, { id: 'kit', proximo: true })
+  await agente('a-exe', 'executor', 'Montar a landing do kit', 'claude-opus-5-5', 'medium')
   await relogio.advance(18_000)
   await fim('a-exe', 'answer')
-  await progresso($, { id: 'rel', proximo: true })
-  await agente('a-lei', 'leitor', 'Ler o guia de migração', 'claude-sonnet-5-5', 'medium')
+  await progresso($, { id: 'kit', proximo: true })
+  await agente('a-lei', 'leitor', 'Ler os dados de 2025', 'claude-sonnet-5-5', 'medium')
   await relogio.advance(9_000)
   await fim('a-lei', 'error')
-  await progresso($, { id: 'rel', proximo: true })
-  await agente('a-leve', 'executor-leve', 'Atualizar o changelog', 'claude-sonnet-5-5', 'medium')
-  await $.tool.call({ tool: 'Edit', tool_use_id: 'e1', file_path: '/app/README.md', old_string: 'a', new_string: 'b', agentId: 'a-leve' } as never)
-  await progresso($, { id: 'rel', proximo: true })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm run build -- --filter docs', run_in_background: true })
+  await progresso($, { id: 'kit', proximo: true })
+  await agente('a-leve', 'executor-leve', 'Escrever o hero', 'claude-sonnet-5-5', 'medium')
+  await $.tool.call({ tool: 'Edit', tool_use_id: 'e1', file_path: '/site/hero.tsx', old_string: 'a', new_string: 'b', agentId: 'a-leve' } as never)
+  await progresso($, { id: 'kit', proximo: true })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm run build -- --filter kit', run_in_background: true })
   await relogio.advance(26_000)
 
   return { relogio }
@@ -1410,7 +1482,7 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
     const ordem = sequencia(await painel.drawn())
     const onde = (texto: string | RegExp) => ordem.findIndex(item => (typeof texto === 'string' ? item === texto : texto.test(item)))
     // De cima para baixo: título, cartões, Recolher, a linha da tarefa, Passos e os grupos na ordem do contrato.
-    const marcos = ['Preparar a release 3.0', 'Custo', 'Tokens', 'Tempo', 'Recolher', /^5\/7 · Testar no app/, '▸ Passos · 7', 'Rodando · 2', '▾ Concluídos · 2', 'Falharam · 1', 'Planejados · 1']
+    const marcos = ['Lançar o kit de vendas', 'Custo', 'Tokens', 'Tempo', 'Recolher', /^5\/7 · Testar no app/, '▸ Passos · 7', 'Rodando · 2', '▾ Concluídos · 2', 'Falharam · 1', 'Planejados · 1']
     const posicoes = marcos.map(marco => onde(marco))
     expect(posicoes.every(posicao => posicao >= 0)).toBe(true)
     expect([...posicoes].sort((a, b) => a - b)).toEqual(posicoes)
@@ -1420,7 +1492,11 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
         expect(await painel.find({ type: 'Text', text: texto })).toBeDefined()
         expect(await painel.find({ type: 'Text', text: numeros })).toBeDefined()
       } else {
-        expect((await painel.findAll({ type: 'Svg' })).map(svg => svg.props.alt)).toContain(`${texto} · ${numeros}`)
+        // O tempo (o último pedaço) sai do desenho e vai num Text à direita dele.
+        const tempo = numeros.split(' ').at(-1) ?? ''
+        const resto = numeros.slice(0, numeros.length - tempo.length).trimEnd()
+        expect((await painel.findAll({ type: 'Svg' })).map(svg => svg.props.alt)).toContain(resto ? `${texto} · ${resto}` : texto)
+        expect(await painel.find({ type: 'Text', text: tempo })).toBeDefined()
       }
     }
     await metrica('5/7 · Testar no app', 'faltam 2 · 1:10')
@@ -1436,7 +1512,7 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
     expect(await painel.find({ type: 'Text', text: ' Sonnet 5.5 · médio' })).toBeDefined()
     await metrica('Edit', 'ctx 3% · 34k ≈$0.02 0:26')
     expect((await painel.find({ type: 'Text', text: /^pesado$/ }))?.props.color).toBe('#E5533A')
-    expect(await painel.find({ type: 'Text', text: '7. Revisar a release inteira' })).toBeDefined()
+    expect(await painel.find({ type: 'Text', text: '7. Revisar o kit inteiro' })).toBeDefined()
     expect(await painel.find({ type: 'Text', text: ' Opus 5.5 · alto' })).toBeDefined()
     // Ícone de estado: glifo no terminal, Svg de 16 px no desktop; nenhum botão "abrir" na linha.
     if (surface === 'terminal') {
@@ -1448,13 +1524,16 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
       expect(estados).toEqual(['rodando', 'rodando', 'rodando', 'concluído', 'concluído', 'falhou', 'planejado'])
     }
     expect((await painel.findAll({ type: 'Button' })).some(botao => botao.props.label === 'abrir')).toBe(false)
-    expect((await painel.find({ key: 'card:a-inv' }))?.props.label).toBe('Mapear mudanças da API')
-    expect(await painel.find({ type: 'Text', text: 'npm run build -- --filter docs' })).toBeDefined()
-    // Desktop: os três cartões são Svg com canto arredondado e o valor maior que o rótulo.
+    expect((await painel.find({ key: 'card:a-inv' }))?.props.label).toBe('Pesquisar lançamentos concorrentes')
+    expect(await painel.find({ type: 'Text', text: 'npm run build -- --filter kit' })).toBeDefined()
+    // Desktop: os três cartões são Svg com canto arredondado e o valor maior que o rótulo; o do Tempo traz o valor num
+    // Text sobre o desenho, que anda sem trocar a imagem.
     if (surface === 'desktop') {
-      const cartoes = (await painel.findAll({ type: 'Svg' })).filter(svg => /^(Custo|Tokens|Tempo): /.test(String(svg.props.alt)))
-      expect(cartoes.map(svg => svg.props.alt)).toEqual(['Custo: ≈$0.10', 'Tokens: 134k', 'Tempo: 1:10'])
+      const cartoes = (await painel.findAll({ type: 'Svg' })).filter(svg => /^(Custo|Tokens|Tempo)(: |$)/.test(String(svg.props.alt)))
+      expect(cartoes.map(svg => svg.props.alt)).toEqual(['Custo: ≈$0.10', 'Tokens: 134k', 'Tempo'])
       expect(cartoes.every(svg => String(svg.props.source).includes('rx="9"') && String(svg.props.source).includes('600 20px'))).toBe(true)
+      expect(textoDaChave(await painel.drawn(), 'tempo-valor')).toBe('1:10')
+      expect((await painel.find({ key: 'tempo-valor' }))?.props.position).toBe('absolute')
     }
     // Sem caixa de borda em volta de cada agente: só os cartões do terminal têm borda.
     const bordas = caixasCom(await painel.drawn(), ['Text']).filter(caixa => caixa.props?.borderStyle)
@@ -1484,28 +1563,42 @@ test('C. o painel Progresso: título, cartões, Recolher, tarefa com prancheta, 
   await painel.unmount()
 })
 
-test('C. a primeira barra com 3+ passos abre o painel sozinho, sem tomar o teclado', async ($, on) => {
-  mundo(on)
+test('C. o painel não abre sozinho: nem no início da sessão, nem com barra de 3+ passos, agente ou comando', async ($, on) => {
+  const { relogio } = mundo(on)
   const abertos: unknown[] = []
   on('ui.open', ($, e) => (abertos.push(e), { value: { isPlaced: true } }))
+  on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5', agentId: e.tool_use_id }))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg1' } }))
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: 'faz', turnId: 't1' })
   await progresso($, { id: 'curta', titulo: 'Curta', passos: ['a', 'b'] })
-  expect(abertos).toEqual([])
   await progresso($, PLANO)
-  expect(abertos).toEqual([{ id: 'progresso', title: 'Progresso', columns: 60 }])
   await progresso($, { id: 'outra', titulo: 'Outra', passos: ['a', 'b', 'c', 'd'] })
-  expect(abertos).toHaveLength(1)
+  await despacharComo($, 'a1')
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm run dev', run_in_background: true })
+  await relogio.advance(5000)
+  expect(abertos).toEqual([])
+  // Pedido pelo usuário abre, sem tomar o teclado: o comando e o percentual de uma barra na banda.
+  await comando($, 'progresso', 'painel')
+  expect(abertos).toEqual([{ id: 'progresso', title: 'Progresso', columns: 60 }])
+  const banda = await montar($, 'terminal')
+  await banda.press({ key: 'painel:pub' })
+  await banda.unmount()
+  expect(abertos).toHaveLength(2)
 })
 
-test('Ícones de linha monocromáticos por tipo e estado, na banda e no painel, sem cor de nível', async ($, on) => {
+test('Revisão do usuário. ícones de linha monocromáticos por tipo e estado, na banda e no painel, sem cor de nível', async ($, on) => {
   await cenarioRico($, on)
   const niveis = ['#4CB782', '#4B8FE8', '#E5533A', '#D9A033', '#3CC4D8']
-  // Banda no desktop: o ícone de linha de 16 px na calha, antes do número, como na v1; a antena (ou os olhos) pisca.
+  // Banda no desktop: o ícone de linha de 16 px na calha de 24, 7 px para dentro (o x do pino e do "5H" do uso),
+  // antes do número, como na v1; a antena (ou os olhos) pisca.
   const banda = await montar($, 'desktop')
-  // O ícone vem num Svg de 16 px logo antes do número e da faixa.
+  // O ícone vem num Svg de 24 px logo antes do número e da faixa.
   const faixas = (await banda.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
   const iconeAntes = (texto: string) => faixas[faixas.findIndex(fonte => fonte.includes(texto)) - 1] ?? ''
-  const doLeve = iconeAntes('Atualizar o changelog')
-  expect(doLeve).toContain('class="gi" transform="translate(0 6) scale(0.6667)"')
+  const doLeve = iconeAntes('Escrever o hero')
+  expect(doLeve).toContain('class="gi" transform="translate(7 6) scale(0.6667)"')
+  expect(doLeve).toContain('width="24" height="24"')
   expect(doLeve).toContain('M13.5 6.5H23')
   expect(doLeve).toContain('class="ib"')
   expect(doLeve).not.toContain('crispEdges')
@@ -1547,7 +1640,7 @@ test('R3. estado vazio: sem agentes nenhum grupo aparece; sem nada, só o aviso'
   mundo(on)
   for (const surface of SUPERFICIES) {
     const nada = await montarPainelLargo($, surface)
-    expect(sequencia(await nada.drawn())).toEqual(['Nenhuma tarefa ainda. A barra de progresso aparece aqui quando o modelo cria uma.', 'Fechar'])
+    expect(sequencia(await nada.drawn())).toEqual(['Nenhuma tarefa ainda. A lista de execução aparece aqui quando o modelo cria uma.', 'Fechar'])
     await nada.unmount()
   }
   await progresso($, PLANO)
@@ -1555,7 +1648,7 @@ test('R3. estado vazio: sem agentes nenhum grupo aparece; sem nada, só o aviso'
     const painel = await montarPainelLargo($, surface)
     // Sem agentes nenhum grupo aparece: só o título, os cartões, o Recolher e a linha da tarefa.
     const ordem = sequencia(await painel.drawn())
-    expect(ordem.slice(0, 5)).toEqual(['Corrigir o login', 'Custo', '—', 'Tokens', '—'])
+    expect(ordem.slice(0, 5)).toEqual(['Publicar página', 'Custo', '—', 'Tokens', '—'])
     for (const grupo of ['Rodando', '▾ Concluídos', '▸ Concluídos', 'Falharam', 'Planejados']) {
       expect(ordem.some(item => item.startsWith(grupo))).toBe(false)
     }
@@ -1563,13 +1656,13 @@ test('R3. estado vazio: sem agentes nenhum grupo aparece; sem nada, só o aviso'
   }
 })
 
-test('C. fechado pelo usuário, o painel não abre sozinho de novo nesta sessão', async ($, on) => {
+test('C. fechado pelo usuário, o painel continua fechado com agente e barra novos e reabre a pedido', async ($, on) => {
   mundo(on)
   const abertos: string[] = []
   on('ui.open', ($, e) => (abertos.push(e.id), { value: { isPlaced: true } }))
   on('ui.close', () => ({ value: undefined }))
   on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5', agentId: e.tool_use_id }))
-  await despacharComo($, 'a1')
+  await comando($, 'progresso', 'painel')
   expect(abertos).toEqual(['progresso'])
   const painel = await $.ui.mount({ plugin: 'progresso', surface: 'terminal', component: 'Pane', requestId: 'progresso', props: PAINEL })
   await painel.press({ key: 'fechar-painel' })
@@ -1577,12 +1670,11 @@ test('C. fechado pelo usuário, o painel não abre sozinho de novo nesta sessão
   await progresso($, { id: 'grande', titulo: 'Grande', passos: ['a', 'b', 'c', 'd'] })
   await despacharComo($, 'a2')
   expect(abertos).toEqual(['progresso'])
-  // Pedido pelo usuário ainda abre.
   await comando($, 'progresso', 'painel')
   expect(abertos).toEqual(['progresso', 'progresso'])
 })
 
-test('C. preço e janela pela tabela de preços; modelo sem preço fica sem ≈$ no cartão', async ($, on) => {
+test('C. preço e janela pela tabela da skill claude-api; modelo sem preço fica sem ≈$ no cartão', async ($, on) => {
   const perto = (valor: number | null, alvo: number) => expect(Math.abs((valor ?? Infinity) - alvo) < 1e-9).toBe(true)
   perto(custoDe('claude-sonnet-5-5', USO), 0.018)
   perto(custoDe('claude-opus-5-5[1m]', USO), (1000 * 4 + 2000 * 5 + 30_000 * 0.2 + 500 * 20) / 1e6)
@@ -1605,7 +1697,7 @@ test('C. preço e janela pela tabela de preços; modelo sem preço fica sem ≈$
 })
 
 
-// --- Desenho ----------------------------------------------------------------------------------------------------
+// --- v3 -------------------------------------------------------------------------------------------------------------
 
 const trilhaDe = async (ui: Awaited<ReturnType<typeof montar>>, titulo: string) =>
   String((await ui.findAll({ type: 'Svg' })).find(svg => String(svg.props.alt).startsWith(`${titulo}:`))?.props.source ?? '')
@@ -1614,8 +1706,8 @@ test('V1. o estado vai dentro da trilha, à direita da pílula, sem linha embaix
   mundo(on)
   await progresso($, { id: 'and', titulo: 'Andando', passos: ['Ler o diff', 'Escrever as notas', 'Revisar'] })
   await progresso($, { id: 'esp', titulo: 'Esperando', passos: ['a', 'b', 'c', 'd'] })
-  await progresso($, { id: 'esp', estado: 'esperando', nota: 'qual versão?' })
-  await progresso($, { id: 'err', titulo: 'Quebrou', passos: ['Baixar', 'Gravar no banco', 'Avisar'] })
+  await progresso($, { id: 'esp', estado: 'esperando', nota: 'qual preço?' })
+  await progresso($, { id: 'err', titulo: 'Quebrou', passos: ['Baixar', 'Subir no CRM', 'Avisar'] })
   await progresso($, { id: 'err', falhou: 'Baixar' })
   // Concluída com pulados: a pílula fica no meio e sobra trilho para o texto à direita.
   await progresso($, { id: 'con', titulo: 'Fechou', passos: ['x', 'y', 'z'] })
@@ -1625,24 +1717,29 @@ test('V1. o estado vai dentro da trilha, à direita da pílula, sem linha embaix
   const andando = await trilhaDe(ui, 'Andando')
   expect(andando).toContain('class="ks">Ler o diff</text>')
   const esperando = await trilhaDe(ui, 'Esperando')
-  expect(esperando).toContain('class="ks">Esperando você · qual versão?</text>')
+  expect(esperando).toContain('class="ks">Esperando você · qual preço?</text>')
   expect(esperando).toContain('M12 4 2 20h20zM12 10.5v4M12 17.5h.01" transform="translate(')
   expect(esperando).toContain('class="ki"')
   expect(esperando).toContain('class="pu"')
   expect(andando).not.toContain('class="pu"')
   expect(await trilhaDe(ui, 'Quebrou')).toContain('class="ks">Falhou: Baixar</text>')
   expect(await trilhaDe(ui, 'Fechou')).toMatch(/class="ks">Concluído em \d+s<\/text>/)
-  // Concluída a 100% não tem trilho à direita: o texto não vira chip sobre o preenchido (a pílula já tem ✓ e o tempo).
-  await progresso($, { id: 'cheia', titulo: 'Cheia', passos: ['x'] })
+  // Concluída enche até o fim, mesmo com passos pulados; sem trilho à direita, o texto vai no chip sobre o preenchido.
+  await progresso($, { id: 'cheia', titulo: 'Cheia', passos: ['x', 'y', 'z'] })
   await progresso($, { id: 'cheia', proximo: true, estado: 'concluido' })
-  expect(await trilhaDe(ui, 'Cheia')).not.toContain('class="kq"')
+  const cheia = await trilhaDe(ui, 'Cheia')
+  expect(cheia).toContain('class="kq"')
+  expect(cheia).toMatch(/class="ks">Concluído em \d+s<\/text>/)
+  // Cheia em porcentagem: o preenchido vai a 100% da largura real, e a pílula encosta na borda (x = 100%).
+  expect(cheia).toContain('<clipPath id="fill"><rect width="100%"')
+  expect(cheia).toContain('<svg x="100%" overflow="visible">')
   // Nada de Text com o estado embaixo da barra: ele só existe dentro do Svg.
   expect((await ui.findAll({ type: 'Text' })).some(texto => /Esperando você|Falhou/.test(String(texto.text ?? '')))).toBe(false)
   await ui.unmount()
 
   // No terminal o estado segue na mesma linha da barra, como antes.
   const linha = await montar($, 'terminal')
-  expect(await linha.find({ type: 'Text', text: 'Esperando você · qual versão?' })).toBeDefined()
+  expect(await linha.find({ type: 'Text', text: 'Esperando você · qual preço?' })).toBeDefined()
   await linha.unmount()
 })
 
@@ -1655,26 +1752,26 @@ test('V1. barra parada mostra "Parou em X/Y" e esperando sem nota "Aguardando in
   await progresso($, { id: 'sem', titulo: 'Sem nota', passos: ['a', 'b'] })
   await progresso($, { id: 'sem', estado: 'esperando' })
   await progresso($, { id: 'longa', titulo: 'Longa', passos: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'] })
-  await progresso($, { id: 'longa', estado: 'esperando', nota: 'Conferir a banda e o painel ao vivo no app desktop, no terminal estreito e no tema escuro antes de instalar a versão nova do plugin no terminal e no app' })
+  await progresso($, { id: 'longa', estado: 'esperando', nota: 'usuário confere a banda e o painel ao vivo no app desktop antes de instalar a versão nova no mod em uso e de liberar a mesma largura para as faixas de agente e de comando' })
   const ui = await montar($, 'desktop')
-  expect(await trilhaDe(ui, 'Corrigir o login')).toContain('class="ks">Parou em 1/3</text>')
+  expect(await trilhaDe(ui, 'Publicar página')).toContain('class="ks">Parou em 1/3</text>')
   expect(await trilhaDe(ui, 'Sem nota')).toContain('class="ks">Aguardando informação</text>')
   const longa = await trilhaDe(ui, 'Longa')
-  expect(longa).toMatch(/class="ks">Esperando você · Conferir[^<]*…<\/text>/)
+  expect(longa).toMatch(/class="ks">Esperando você · usuário[^<]*…<\/text>/)
   await ui.unmount()
 })
 
 test('V2. a estrela do Claude gira na pílula em andamento, nas faixas de agente e no painel; os outros estados trocam pelo ícone', async ($, on) => {
   await cenarioRico($, on)
   const banda = await montar($, 'desktop')
-  const trilha = await trilhaDe(banda, 'Preparar a release 3.0')
+  const trilha = await trilhaDe(banda, 'Lançar o kit de vendas')
   expect(trilha).toContain('fill="#D97757"')
   expect(trilha).toContain('<g class="eg"><g class="ep">')
   expect(trilha).not.toContain('class="mk sd"')
   // Brilho na parte cheia da barra em andamento.
   expect(trilha).toContain('class="sh"')
   const faixas = (await banda.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
-  expect(faixas.find(fonte => fonte.includes('Atualizar o changelog'))).toContain('<g class="eg">')
+  expect(faixas.find(fonte => fonte.includes('Escrever o hero'))).toContain('<g class="eg">')
   // O comando não é o Claude: fica com o ponto.
   expect(faixas.find(fonte => fonte.includes('npm run build'))).not.toContain('<g class="eg">')
   await banda.unmount()
@@ -1717,7 +1814,7 @@ test('V5. prancheta, terminal com cursor piscando e ícones de passo em Svg no d
 test('V6. passo que falhou é ✕ vermelho no painel, também depois de o plano ser reescrito', async ($, on) => {
   mundo(on)
   await progresso($, PLANO)
-  await progresso($, { id: 'pub', falhou: 'Ler as issues' })
+  await progresso($, { id: 'pub', falhou: 'Ler briefing' })
   await progresso($, { ...PLANO, etapas: [...PLANO.etapas, { nome: 'Verificar', passos: ['Testar'] }] })
   for (const surface of SUPERFICIES) {
     const painel = await montarPainelLargo($, surface)
@@ -1725,7 +1822,7 @@ test('V6. passo que falhou é ✕ vermelho no painel, também depois de o plano 
     if (surface === 'terminal') await painel.press({ key: 'passos' })
     if (surface === 'terminal') {
       expect((await painel.find({ type: 'Text', text: '✕' }))?.props.color).toBe('error')
-      expect((await painel.find({ type: 'Text', text: 'Ler as issues' }))?.props.color).toBe('error')
+      expect((await painel.find({ type: 'Text', text: 'Ler briefing' }))?.props.color).toBe('error')
     } else {
       const falho = (await painel.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'falhou' && svg.props.width === 16 && String(svg.props.source).includes('m15 9-6 6'))
       expect(String(falho?.props.source)).toContain('#E5534B')
@@ -1739,7 +1836,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
   on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5-5', agentId: e.tool_use_id }))
   on('tool.call', { tool: 'Bash' }, ($, e) => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: `bg-${e.tool_use_id}` } }))
   await $.turn.start({ text: 'faz', turnId: 't1' })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'p1', command: 'cd /tmp/proj && npm test -- --watch', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'p1', command: 'cd /private/tmp/claude-501/proj && npm test -- --watch', run_in_background: true })
   await $.tool.call({ tool: 'Bash', tool_use_id: 'p2', command: 'cd "/tmp/com espaço"; npm run dev', run_in_background: true })
   await despacharComo($, 'ag1')
   await $.tool.call({ tool: 'Bash', tool_use_id: 'f1', command: 'npm run lint', run_in_background: true, agentId: 'ag1' } as never)
@@ -1751,7 +1848,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
     return alt
   }
   let alt = await altos()
-  expect(alt).toContain('comando npm test -- --watch em /tmp/proj: em andamento')
+  expect(alt).toContain('comando npm test -- --watch em /private/tmp/claude-501/proj: em andamento')
   expect(alt).toContain('comando npm run dev em /tmp/com espaço: em andamento')
   const terminal = await montar($, 'terminal')
   expect(await terminal.find({ type: 'Text', text: '$ npm test -- --watch' })).toBeDefined()
@@ -1776,7 +1873,7 @@ test('V6. comando sem o "cd <pasta> &&" no rótulo, pasta no alt; segue vivo com
   ]
   await $.classic.Stop({ stop_hook_active: false, background_tasks: fundo })
   alt = await altos()
-  expect(alt).toContain('comando npm test -- --watch em /tmp/proj: concluído')
+  expect(alt).toContain('comando npm test -- --watch em /private/tmp/claude-501/proj: concluído')
   expect(alt).toContain('comando npm run dev em /tmp/com espaço: em andamento')
   expect(alt).toContain('comando npm run lint: em andamento')
   // Subagente no Stop não mexe.
@@ -1808,18 +1905,62 @@ test('V6. o command só casa inteiro; o começo basta só quando o host cortou e
   expect(alt.some(texto => texto.startsWith('comando node gera.js') && texto.endsWith(': em andamento'))).toBe(true)
 })
 
-test('3.3. com os mesmos dados nenhum Svg do painel muda entre dois tiques, nem o cartão Tempo', async ($, on) => {
+test('3.3. com os mesmos dados nenhum Svg do painel muda entre dois tiques; só os Text de tempo andam', async ($, on) => {
   const { relogio } = await cenarioRico($, on)
-  const fontes = async () => {
+  const leitura = async () => {
     const painel = await montarPainelLargo($, 'desktop')
-    const lista = (await painel.findAll({ type: 'Svg' })).map(svg => `${String(svg.props.alt).startsWith('Tempo:') ? 'tempo' : ''}|${String(svg.props.source)}`)
+    const fontes = (await painel.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
+    const arvore = await painel.drawn()
+    const tempos = ['tempo-valor', 'nt:tarefa', 'nt:a-leve'].map(chave => segundosDe(textoDaChave(arvore, chave)))
     await painel.unmount()
-    return lista
+    return { fontes, tempos }
   }
-  const antes = await fontes()
-  expect(antes.find(fonte => fonte.startsWith('tempo|'))).toContain('class="ps1"')
+  const antes = await leitura()
+  expect(antes.fontes.some(fonte => fonte.includes('--d:'))).toBe(false)
   await relogio.advance(2000)
-  expect(await fontes()).toEqual(antes)
+  const depois = await leitura()
+  expect(depois.fontes).toEqual(antes.fontes)
+  expect(depois.tempos).toEqual(antes.tempos.map(n => n + 2))
+})
+
+test('relógio: cartão Tempo, tarefa e agente avançam a cada tique sem trocar desenho, e param ao concluir', async ($, on) => {
+  const { relogio } = mundo(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5-5', agentId: e.tool_use_id }))
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, { id: 'voz', titulo: 'Leitor de seleção', passos: ['a', 'b', 'c', 'd', 'e'] })
+  await comando($, 'progresso', 'painel')
+  await relogio.advance(18_000)
+  await despacharComo($, 'ex1')
+  let painel = await montarPainelLargo($, 'desktop')
+  // O cartão Tempo, a métrica da tarefa e a do agente, em segundos, lidos do Text de cada um.
+  const tempos = async () => {
+    const arvore = await painel.drawn()
+    return ['tempo-valor', 'nt:tarefa', 'nt:ex1'].map(chave => segundosDe(textoDaChave(arvore, chave)))
+  }
+  const fontes = async () => (await painel.findAll({ type: 'Svg' })).map(svg => String(svg.props.source))
+  expect(await tempos()).toEqual([18, 18, 0])
+  const desenho = await fontes()
+  const vistos: number[][] = []
+  for (let k = 1; k <= 3; k++) {
+    // O tique redesenha o painel montado; a remontagem é o painel que o desktop monta de novo.
+    await relogio.advance(1000)
+    vistos.push(await tempos())
+    expect(await fontes()).toEqual(desenho)
+    await painel.unmount()
+    painel = await montarPainelLargo($, 'desktop')
+    vistos.push(await tempos())
+  }
+  expect(vistos).toEqual([[19, 19, 1], [19, 19, 1], [20, 20, 2], [20, 20, 2], [21, 21, 3], [21, 21, 3]])
+
+  // Concluídos, o tempo para.
+  await $.turn.complete({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 't-ex1', agentId: 'ex1', reason: 'answer' })
+  await progresso($, { id: 'voz', estado: 'concluido', proximo: true })
+  const fechado = await tempos()
+  expect(fechado).toEqual([21, 21, 3])
+  await relogio.advance(5000)
+  expect(await tempos()).toEqual(fechado)
+  await painel.unmount()
 })
 
 test('robustez: no terminal a 30 colunas nenhuma linha do painel passa da largura', async ($, on) => {
@@ -1854,14 +1995,17 @@ test('V6. no Stop, comando de subagente terminado e fora da lista fecha; de suba
 test('calha: o ícone do tipo vem antes do número em agente e comando, nas duas superfícies; nenhum Svg com alt vazio', async ($, on) => {
   await cenarioRico($, on)
   const desktop = await montar($, 'desktop')
-  for (const [texto, tipo, traco] of [['Atualizar o changelog', 'agente', 'M13.5 6.5H23'], ['npm run build', 'comando', 'm4 17 6-6-6-6']] as const) {
-    const linha = caixasCom(await desktop.drawn(), ['Svg', 'Box']).find(caixa => filhos(caixa).some(f => String(f.props?.source ?? '').includes(texto)))
-    const [icone, numero, faixa] = filhos(linha)
+  for (const [texto, tipo, traco] of [['Escrever o hero', 'agente', 'M13.5 6.5H23'], ['npm run build', 'comando', 'm4 17 6-6-6-6']] as const) {
+    // A faixa vem num Box esticado: a linha é a Box com o ícone e um filho cujo Svg traz o texto.
+    const temTexto = (no: No | undefined) => filhos(no).some(f => String(f.props?.source ?? '').includes(texto))
+    const linha = caixasCom(await desktop.drawn(), ['Svg', 'Box']).find(caixa => filhos(caixa).some(temTexto))
+    const [icone, numero, caixaDaFaixa] = filhos(linha)
     expect(icone?.type).toBe('Svg')
     expect(icone?.props?.alt).toBe(tipo)
+    expect(icone?.props?.width).toBe(24)
     expect(String(icone?.props?.source)).toContain(traco)
     expect(numero?.type).toBe('Box')
-    expect(String(faixa?.props?.source)).toContain(texto)
+    expect(String(filhos(caixaDaFaixa)[0]?.props?.source)).toContain(texto)
   }
   const vazios = async (ui: Awaited<ReturnType<typeof montar>>) => (await ui.findAll({ type: 'Svg' })).filter(svg => !String(svg.props.alt ?? '').trim())
   expect(await vazios(desktop)).toHaveLength(0)
@@ -1880,12 +2024,589 @@ test('calha: o ícone do tipo vem antes do número em agente e comando, nas duas
   await terminal.unmount()
 })
 
-test('tipos padrão do Claude Code e tipos desconhecidos têm ícone e nível', () => {
-  expect(desenhoDoTipo('Explore')).toBe('investigador')
-  for (const tipo of ['general-purpose', 'Plan', 'claude', 'fork', 'meu-agente', 'plugin-x:revisor']) {
-    expect(desenhoDoTipo(tipo), tipo).toBe('robo')
+test('relógio: barra esperando anda tique a tique na banda e no painel sem trocar desenho; erro para o relógio', async ($, on) => {
+  const { relogio } = mundo(on)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('agent.spawn', ($, e) => ({ model: 'claude-sonnet-5-5', agentId: e.tool_use_id }))
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, { id: 'voz', titulo: 'Leitor de seleção', passos: ['a', 'b', 'c', 'd', 'e'] })
+  await despacharComo($, 'ex1')
+  await relogio.advance(450_300)
+  await progresso($, { id: 'voz', estado: 'esperando', nota: 'aguardando teste do usuário' })
+  const painel = await montarPainelLargo($, 'desktop')
+  const banda = await montar($, 'desktop')
+  const leitura = async () => {
+    const doPainel = await painel.drawn()
+    const daBanda = await banda.drawn()
+    return [
+      segundosDe(textoDaChave(doPainel, 'tempo-valor')),
+      segundosDe(textoDaChave(doPainel, 'nt:tarefa')),
+      segundosDe(textoDaChave(doPainel, 'nt:ex1')),
+      segundosDe(textoDaChave(daBanda, 'tempo:voz:ex1')),
+    ]
   }
-  expect(desenhoDoTipo('plugin-x:executor-leve')).toBe('leve')
-  expect(nivelDe('general-purpose')).toEqual({ rotulo: 'general-purpose', cor: '#8A857B', hex: '#8A857B' })
-  expect(nivelDe('').rotulo).toBe('agente')
+  const fontes = async () => [...(await painel.findAll({ type: 'Svg' })), ...(await banda.findAll({ type: 'Svg' }))].map(svg => String(svg.props.source))
+  const desenho = await fontes()
+  let antes = await leitura()
+  expect(antes).toEqual([450, 450, 450, 450])
+  for (let k = 1; k <= 8; k++) {
+    await relogio.advance(1000)
+    const agora = await leitura()
+    expect(agora).toEqual(antes.map(n => n + 1))
+    expect(await fontes()).toEqual(desenho)
+    antes = agora
+  }
+  await progresso($, { id: 'voz', falhou: 'a', nota: 'quebrou' })
+  const parado = textoDaChave(await painel.drawn(), 'tempo-valor')
+  await relogio.advance(3000)
+  expect(textoDaChave(await painel.drawn(), 'tempo-valor')).toBe(parado)
+  await banda.unmount()
+  await painel.unmount()
+})
+
+test('P1. pendências: adiciona com ícone padrão por palavra-chave, resolve por título aproximado ou número e lista', async ($, on) => {
+  mundo(on)
+  const criou = await progresso($, {
+    pendencias: [
+      { titulo: 'Prompt da aula 4', quem: 'você' },
+      { titulo: 'Vídeos dos templates 02–06', quem: 'você' },
+      { titulo: 'Ligar as 6 automações', quem: 'seu ok' },
+      { titulo: 'Conferir copy', icone: '🧪' },
+    ],
+  })
+  expect(criou.result).toBe(
+    '4 adicionadas · Pendências (4): 1. Prompt da aula 4 (você) | 2. Vídeos dos templates 02–06 (você) | 3. Ligar as 6 automações (seu ok) | 4. Conferir copy.',
+  )
+  // Título repetido atualiza em vez de duplicar.
+  expect((await progresso($, { pendencias: [{ titulo: 'conferir COPY', quem: 'Claude' }] })).result).toContain('4. Conferir copy (Claude).')
+  // Resolver conta na lista de antes: "4" e "prompt da aula" saem juntos.
+  const resolveu = await progresso($, { resolver: ['4', 'prompt da aula'] })
+  expect(resolveu.result).toBe('2 resolvidas · Pendências (2): 1. Vídeos dos templates 02–06 (você) | 2. Ligar as 6 automações (seu ok).')
+  expect((await progresso($, { listar: true })).result).toBe('Pendências (2): 1. Vídeos dos templates 02–06 (você) | 2. Ligar as 6 automações (seu ok).')
+  const nada = await progresso($, { resolver: ['inexistente'] })
+  expect(nada.deny).toContain('Nenhuma pendência casou com "inexistente"')
+  // Sem id e sem pendência, a recusa da barra continua.
+  expect((await progresso($, { titulo: 'x' })).deny).toContain('Informe `id`')
+  // Junto de uma atualização da barra, cada parte responde numa linha.
+  await progresso($, { id: 'pub', titulo: 'Publicar', passos: ['um', 'dois'] })
+  const junto = await progresso($, { id: 'pub', proximo: true, resolver: ['vídeos'] })
+  expect(junto.result).toBe('1/2 · em andamento · ativo: dois\n1 resolvida · Pendências (1): 1. Ligar as 6 automações (seu ok).')
+})
+
+test('P2. pendência não faz o Stop cobrar, fica entre turnos e volta da conversa guardada no store', async ($, on) => {
+  const loja = new Map<string, unknown>()
+  const sessao = { id: 's1' }
+  mundo(on, loja, sessao)
+  on('prompt.submit', ($, e) => ({ text: e.text }))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, { pendencias: [{ titulo: 'Prompt da aula 4', quem: 'você' }] })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  await fimDoTurnoPrincipal($, 't1')
+  await $.turn.start({ text: 'outra', turnId: 't2' })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  const ui = await montar($, 'terminal')
+  expect(String((await ui.find({ key: 'pendencias:abrir' }))?.props.label)).toBe('1 pendência')
+
+  // /resume para outra conversa e de volta: a pendência é da s1.
+  await $.session.end({ reason: 'resume', sessionId: 's1', resume: { id: 's1' } })
+  sessao.id = 's2'
+  expect(await ui.find({ key: 'pendencias:abrir' })).toBeUndefined()
+  await $.session.end({ reason: 'resume', sessionId: 's2', resume: { id: 's2' } })
+  sessao.id = 's1'
+  await $.prompt.submit({ text: 'continua', wait: false, origin: { kind: 'composer' } })
+  expect(String((await ui.find({ key: 'pendencias:abrir' }))?.props.label)).toBe('1 pendência')
+  await ui.unmount()
+})
+
+test('P3. a faixa de pendências recolhe e expande nas duas superfícies, aparece sem barra e com /progresso off, e some com N = 0', async ($, on) => {
+  mundo(on)
+  for (const surface of SUPERFICIES) {
+    const ui = await montar($, surface)
+    expect(await ui.find({ key: 'pendencias' })).toBeUndefined()
+    await ui.unmount()
+  }
+  await progresso($, { pendencias: [{ titulo: 'Prompt da aula 4', quem: 'você' }, { titulo: 'Ligar as 6 automações', quem: 'seu ok' }] })
+  // Terminal: rótulo e seta clicáveis, prévia apagada, itens em árvore.
+  const ui = await montar($, 'terminal')
+  expect(String((await ui.find({ key: 'pendencias:abrir' }))?.props.label)).toBe('2 pendências')
+  expect(String((await ui.find({ key: 'pendencias:seta' }))?.props.label)).toBe('▾')
+  expect(await ui.find({ type: 'Text', text: 'Prompt da aula 4 · Ligar as 6 automações' })).toBeDefined()
+  await ui.press({ key: 'pendencias:seta' })
+  expect(String((await ui.find({ key: 'pendencias:seta' }))?.props.label)).toBe('▴')
+  expect(await ui.find({ type: 'Text', text: '  ├' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Prompt da aula 4' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'seu ok' })).toBeDefined()
+  await ui.press({ key: 'pendencias:abrir' })
+  expect(await ui.find({ type: 'Text', text: '  ├' })).toBeUndefined()
+  await ui.unmount()
+  // Desktop: recolhida, a imagem das pílulas e a seta (só ela alterna); aberta, "N pendências" num Button e os itens em texto nativo.
+  const tela = await montar($, 'desktop')
+  expect(await tela.find({ key: 'pendencias:abrir' })).toBeUndefined()
+  expect(String((await pilulasDe(tela))?.props.alt)).toStartWith('2 pendências')
+  expect(String((await tela.find({ key: 'pendencias:seta' }))?.props.label)).toBe('⏷')
+  expect(noDaChave(await tela.drawn(), 'pendencia:0')).toBeUndefined()
+  await tela.press({ key: 'pendencias:seta' })
+  expect(String((await tela.find({ key: 'pendencias:seta' }))?.props.label)).toBe('⏶')
+  // Sem label próprio: no desktop o label tomava o lugar do texto ("Abrir pendências" no lugar de "2 pendências").
+  expect(String((await tela.find({ key: 'pendencias:abrir' }))?.props.label)).toBe('2 pendências')
+  expect(await pilulasDe(tela)).toBeUndefined()
+  expect(tudoDe(noDaChave(await tela.drawn(), 'pendencia:0'))).toContain('Prompt da aula 4')
+  expect(tudoDe(noDaChave(await tela.drawn(), 'pendencia:1'))).toContain('depende de seu ok')
+  // O título do item é um Button plain, como o rótulo, e recolhe a faixa.
+  expect(String((await tela.find({ key: 'pendencia:0:abrir' }))?.props.label)).toBe('Prompt da aula 4')
+  await tela.press({ key: 'pendencia:0:abrir' })
+  expect(String((await tela.find({ key: 'pendencias:seta' }))?.props.label)).toBe('⏷')
+  await tela.press({ key: 'pendencias:seta' })
+  await tela.press({ key: 'pendencias:abrir' })
+  expect(String((await tela.find({ key: 'pendencias:seta' }))?.props.label)).toBe('⏷')
+  await tela.unmount()
+  // Com barra, a faixa vem depois dela; /progresso off esconde a barra e deixa as pendências.
+  await progresso($, PLANO)
+  await comando($, 'progresso', 'off')
+  const fim = await montar($, 'terminal')
+  expect(await fim.find({ type: 'Text', text: 'Publicar página' })).toBeUndefined()
+  expect(await fim.find({ key: 'pendencias:abrir' })).toBeDefined()
+  await progresso($, { resolver: ['1', '2'] })
+  expect(await fim.find({ key: 'pendencias' })).toBeUndefined()
+  await fim.unmount()
+})
+
+test('P4. a descrição da ferramenta e a regra explicam pendência x passo', async ($, on) => {
+  const { registradas } = mundo(on)
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const descricao = registradas.find(item => item.name === 'progresso')?.description ?? ''
+  expect(descricao).toContain('não é passo ativo do turno')
+  expect(descricao).toContain('{resolver:[')
+  expect(descricao).toContain('não seguram o fim do turno')
+})
+
+// Faixa de pendências v2: ícones de traço, a largura das barras, a prévia e o lembrete do Stop.
+
+/** O nó da chave pedida na árvore desenhada. */
+function noDaChave(arvore: unknown, chave: string): No | undefined {
+  const acha = (no: No | string): No | undefined => {
+    if (typeof no === 'string') return undefined
+    if (no.props?.key === chave || (no as { key?: unknown }).key === chave) return no
+    for (const filho of no.children ?? []) {
+      const achado = acha(filho)
+      if (achado) return achado
+    }
+    return undefined
+  }
+  return acha(arvore as No)
+}
+/** Tudo que o nó mostra ou descreve: textos, rótulos, alts e as fontes dos Svg. */
+function tudoDe(no: No | string | undefined): string {
+  if (no === undefined) return ''
+  if (typeof no === 'string') return no
+  return [String(no.props?.label ?? ''), String(no.props?.alt ?? ''), String(no.props?.source ?? ''), ...(no.children ?? []).map(tudoDe)].join(' ')
+}
+const EMOJI = /\p{Extended_Pictographic}/u
+/** A imagem das pílulas da linha recolhida: o Svg cujo alt começa pela contagem. */
+const pilulasDe = async (ui: { findAll: (q: { type: string }) => Promise<{ type?: string; props: Record<string, unknown> }[]> }) =>
+  (await ui.findAll({ type: 'Svg' })).find(svg => /^\d+ pend[eê]ncias?: /.test(String(svg.props.alt)))
+const TRES = [
+  { titulo: 'Prompt da aula 4', quem: 'você' },
+  { titulo: 'Vídeos dos templates 02–06', quem: 'você' },
+  { titulo: 'Ligar as 6 automações', quem: 'seu ok' },
+]
+
+test('P5. no desktop a faixa de pendências estica até a borda pelo flex, sem régua em px; o divisor é um Svg sem width esticado', async ($, on) => {
+  mundo(on)
+  await progresso($, { pendencias: TRES })
+  let ui = await montar($, 'desktop')
+  expect(noDaChave(await ui.drawn(), 'progresso')?.props?.alignSelf).toBeUndefined()
+  // Nenhum Svg com a largura estimada da banda: a régua saiu (uma régua maior que a área real estourava a linha).
+  expect((await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'largura')).toBeUndefined()
+  await ui.unmount()
+  await progresso($, PLANO)
+  ui = await montar($, 'desktop')
+  const arvore = await ui.drawn()
+  // O fio é filho direto da coluna da banda, sem Box em volta: um Box com width 0 numa coluna o deixava com 0 px.
+  const divisor = filhos(noDaChave(arvore, 'progresso')).find(no => no?.type === 'Svg' && no?.props?.alt === 'divisor')
+  expect(divisor).toBeDefined()
+  expect(divisor?.props?.width).toBeUndefined()
+  expect(String(divisor?.props?.source)).toContain('x2="100%"')
+  expect(noDaChave(arvore, 'pendencias:topo')?.props?.width).toBeUndefined()
+  await ui.unmount()
+})
+
+test('P5a. no desktop, com barras, o %, o relógio das faixas e a seta das pendências ficam na borda pelo flex: os desenhos crescem até eles', async ($, on) => {
+  mundo(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
+  await progresso($, PLANO)
+  await despachar($)
+  await progresso($, { pendencias: TRES })
+  const ui = await montar($, 'desktop')
+  const arvore = await ui.drawn()
+  expect(noDaChave(arvore, 'progresso')?.props?.alignSelf).toBeUndefined()
+  // Nenhuma linha tem largura própria; o desenho do meio cresce (flexGrow) e empurra a coluna da direita até a borda.
+  for (const chave of ['topo:pub', 'linha:pub:ag1', 'pendencias:topo']) expect(noDaChave(arvore, chave)?.props?.width).toBeUndefined()
+  expect(filhos(noDaChave(arvore, 'topo:pub')).at(-1)?.props?.justifyContent).toBe('flex-end')
+  expect(filhos(noDaChave(arvore, 'linha:pub:ag1')).at(-1)?.props?.justifyContent).toBe('flex-end')
+  const topo = noDaChave(arvore, 'pendencias:topo')
+  expect(filhos(topo).map(f => f.props?.key ?? f.props?.alt)).toEqual(['pendências', 'pendencias:corpo', 'pendencias:fim'])
+  expect(noDaChave(arvore, 'pendencias:corpo')?.props).toMatchObject({ flexDirection: 'column', flexGrow: 1, width: 0 })
+  expect(noDaChave(arvore, 'pendencias:fim')?.props).toMatchObject({ minWidth: 3, flexShrink: 0, justifyContent: 'flex-end' })
+  await ui.unmount()
+})
+
+test('P5b. pendências no desktop: pino na calha de 24, pílulas esticadas até a seta, seta em minWidth; aberta, o rótulo cresce e a pílula de quem vem logo depois do título', async ($, on) => {
+  mundo(on)
+  await progresso($, { pendencias: TRES })
+  const ui = await montar($, 'desktop')
+  let arvore = await ui.drawn()
+  expect(filhos(noDaChave(arvore, 'pendencias:topo'))[0]?.props).toMatchObject({ alt: 'pendências', width: 24 })
+  // Recolhida: as pílulas são um Svg sem width (100% da imagem), dentro do corpo que cresce até a seta.
+  const pilulas = await pilulasDe(ui)
+  expect(pilulas?.props?.width).toBeUndefined()
+  expect(String(pilulas?.props?.source)).toContain('width="100%"')
+  expect(filhos(noDaChave(arvore, 'pendencias:corpo'))[0]?.props?.alt).toBe(pilulas?.props?.alt)
+  expect(filhos(noDaChave(arvore, 'pendencias:fim'))[0]?.type).toBe('Button')
+  await ui.press({ key: 'pendencias:seta' })
+  arvore = await ui.drawn()
+  // Aberta: "N pendências" num corpo que cresce (sem colunas fixas) e corta em vez de empurrar a seta.
+  expect(noDaChave(arvore, 'pendencias:corpo')?.props).toMatchObject({ flexGrow: 1, width: 0, overflow: 'hidden' })
+  // A pílula vem logo depois do título (não na borda): o título encolhe e corta, a pílula fica na grade de 8 + recuo.
+  const quem = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'depende de você')
+  expect((Number(quem?.props.width) - RECUO_DA_SETA) % 8).toBe(0)
+  expect(noDaChave(arvore, 'pendencia:0:titulo')?.props?.flexShrink).toBe(1)
+  expect(noDaChave(arvore, 'pendencia:0:texto')?.props?.flexShrink).toBe(1)
+  expect(noDaChave(arvore, 'pendencia:0')?.props?.justifyContent).toBeUndefined()
+  // Respiro de 6 px entre o cabeçalho e a lista aberta, esticado como os outros desenhos.
+  const respiro = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'espaço')
+  expect(respiro?.props.height).toBe(6)
+  expect(respiro?.props.width).toBeUndefined()
+  // Título e rótulo são o mesmo elemento (Button plain) depois do mesmo ícone de 24: começam no mesmo x.
+  expect(filhos(noDaChave(arvore, 'pendencia:0:titulo'))[0]?.props?.width).toBe(24)
+  expect(filhos(noDaChave(arvore, 'pendencia:0:texto'))[0]?.type).toBe('Button')
+  expect(filhos(noDaChave(arvore, 'pendencias:corpo'))[0]?.type).toBe('Button')
+  await ui.unmount()
+})
+
+test('P6. nenhum emoji na faixa, nas duas superfícies, recolhida e aberta, nem na descrição e no resultado da ferramenta', async ($, on) => {
+  const { registradas } = mundo(on)
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  const descricao = registradas.find(item => item.name === 'progresso')?.description ?? ''
+  expect(EMOJI.test(descricao)).toBe(false)
+  expect(descricao).toContain('documento')
+  const criou = await progresso($, { pendencias: [...TRES, { titulo: 'Conferir copy', icone: '🧪' }, { titulo: 'Gravar intro', icone: '🎬' }] })
+  expect(EMOJI.test(String(criou.result))).toBe(false)
+  expect(EMOJI.test(String((await progresso($, { listar: true })).result))).toBe(false)
+  for (const surface of SUPERFICIES) {
+    const ui = await montar($, surface)
+    expect(EMOJI.test(tudoDe(noDaChave(await ui.drawn(), 'pendencias')))).toBe(false)
+    await ui.press({ key: 'pendencias:seta' })
+    const aberta = tudoDe(noDaChave(await ui.drawn(), 'pendencias'))
+    expect(aberta).toContain('Gravar intro')
+    expect(EMOJI.test(aberta)).toBe(false)
+    await ui.press({ key: 'pendencias:seta' })
+    await ui.unmount()
+  }
+})
+
+test('P7. emoji guardado vira o nome do ícone, apelido também, e sem ícone o nome sai do título', async () => {
+  const antigos: [string, string][] = [
+    ['⏳', 'espera'], ['🎬', 'video'], ['🔌', 'automacao'], ['🚀', 'publicar'], ['🔑', 'acesso'], ['💳', 'pagamento'],
+    ['🎨', 'imagem'], ['✉️', 'email'], ['🐞', 'bug'], ['📊', 'dados'], ['👀', 'revisar'],
+  ]
+  for (const [emoji, nome] of antigos) expect(comoPendencia({ titulo: 'Qualquer coisa', icone: emoji }, 1)?.icone).toBe(nome)
+  for (const nome of ICONES_PENDENCIA) expect(nomeDoIcone(nome, 'x')).toBe(nome)
+  expect(nomeDoIcone('Foguete', 'x')).toBe('publicar')
+  expect(nomeDoIcone('', 'Prompt da aula 4')).toBe('documento')
+  expect(nomeDoIcone(undefined, 'Vídeos dos templates')).toBe('video')
+  expect(nomeDoIcone('🧪', 'Ligar as automações')).toBe('automacao')
+  expect(nomeDoIcone(undefined, 'Algo sem palavra')).toBe('espera')
+})
+
+test('P7b. pendência com emoji guardada no store volta com o nome do ícone desenhado em traço', async ($, on) => {
+  const loja = new Map<string, unknown>([['sessoes', { s1: { em: 1, barras: [], pendencias: [{ titulo: 'Material da aula', icone: '🎬', quem: 'você', criadaEm: 1 }] } }]])
+  mundo(on, loja)
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  const ui = await montar($, 'desktop')
+  await ui.press({ key: 'pendencias:seta' })
+  const item = (await ui.findAll({ type: 'Svg' })).find(svg => svg.props.alt === 'ícone video')
+  // O desenho do vídeo (a lente do Lucide "video") e nenhum emoji.
+  expect(String(item?.props.source)).toContain('m16 13 5.223 3.482')
+  expect(EMOJI.test(String(item?.props.source))).toBe(false)
+  await ui.unmount()
+})
+
+test('P8. recolhida mostra uma pílula por item com o título curto, a contagem âmbar e, sem espaço, o "+N"', async ($, on) => {
+  mundo(on)
+  await progresso($, { pendencias: [...TRES, { titulo: 'Reiniciar o app (Cmd+Q) e conferir a faixa nova', icone: 'revisar', quem: 'você' }] })
+  const ui = await montar($, 'desktop')
+  const pilulas = await pilulasDe(ui)
+  const fonte = String(pilulas?.props.source)
+  expect(pilulas?.type).toBe('Svg')
+  // Todos cabem na largura normal: nenhum "+N", o título longo corta em 22 com reticências, a contagem é o número.
+  expect(fonte).not.toContain('>+')
+  expect(fonte).toContain('>Reiniciar o app (Cmd+…<')
+  expect(fonte).toContain('class="pct" x=')
+  expect(fonte).toMatch(/class="pct"[^>]*>4</)
+  expect(String(pilulas?.props.alt)).toBe('4 pendências: Ligar as 6 automações (seu ok), Prompt da aula 4, Vídeos dos templates 02–06, Reiniciar o app (Cmd+Q) e conferir a faixa nova')
+  // Recolhida não tem prévia em texto nem Button além da seta.
+  expect((await ui.findAll({ type: 'Text' })).find(texto => /aula/.test(String(texto.text)))).toBeUndefined()
+  await ui.unmount()
+  expect(tituloCurto('Reiniciar o app (Cmd+Q) e conferir a faixa nova')).toBe('Reiniciar o app (Cmd+…')
+  expect([...tituloCurto('Reiniciar o app (Cmd+Q) e conferir a faixa nova')].length).toBeLessThanOrEqual(22)
+  expect(tituloCurto('Prompt da aula 4')).toBe('Prompt da aula 4')
+  // A prévia em texto segue no terminal, em colunas.
+  expect(previaDasPendencias(TRES.map(item => item.titulo), 30, texto => [...texto].length)).toBe('Prompt da aula 4 · +2')
+  expect(larguraNativa('x')).toBeGreaterThan(0)
+})
+
+const QUATRO = [
+  { titulo: 'Prompt da aula 4', icone: 'documento' as const, quem: 'você', criadaEm: 1 },
+  { titulo: 'Vídeos dos templates 02–06', icone: 'video' as const, quem: 'você', criadaEm: 1 },
+  { titulo: 'Ligar as 6 automações', icone: 'automacao' as const, quem: 'seu ok', criadaEm: 1 },
+  { titulo: 'Reiniciar o app (Cmd+Q) e conferir a faixa nova', icone: 'revisar' as const, quem: 'você', criadaEm: 1 },
+]
+
+test('P8b. a linha recolhida põe primeiro o que espera aprovação, com borda e ícone âmbar', () => {
+  for (const quem of ['seu ok', 'ok', 'OK do usuário', 'aprovação', 'Aprovação do time', 'aprovar']) expect(ehAprovacao(quem)).toBe(true)
+  for (const quem of ['você', 'Claude', 'Meta', 'usuário', 'book', '']) expect(ehAprovacao(quem)).toBe(false)
+  expect(ordemDaLinha(QUATRO).map(item => item.titulo)).toEqual(['Ligar as 6 automações', 'Prompt da aula 4', 'Vídeos dos templates 02–06', 'Reiniciar o app (Cmd+Q) e conferir a faixa nova'])
+  // A ordem dos demais é a de chegada, e a lista original não muda.
+  expect(QUATRO[0]!.titulo).toBe('Prompt da aula 4')
+  const fonte = svgDasPilulas(QUATRO, 856).source
+  expect(fonte.indexOf('Ligar as 6 automações')).toBeLessThan(fonte.indexOf('Prompt da aula 4'))
+  expect(fonte.match(/class="pp ok"/g)?.length).toBe(1)
+  expect(fonte.match(/class="pi2 ok"/g)?.length).toBe(1)
+  expect(fonte.match(/class="pp"/g)?.length).toBe(3)
+})
+
+test('P8c. sem espaço, as pílulas que não cabem viram um "+N" final, e tudo cabe na largura dada', () => {
+  const larga = svgDasPilulas(QUATRO, 856)
+  expect(larga.mostradas).toBe(4)
+  for (const [W, mostradas] of [[280, 1], [160, 0]] as const) {
+    const { source, mostradas: m, alt } = svgDasPilulas(QUATRO, W)
+    expect(m).toBe(mostradas)
+    expect(source).toContain(`>+${4 - mostradas}<`)
+    expect(alt).toEndWith(`e mais ${4 - mostradas}`)
+    // A borda direita do último retângulo não passa de W.
+    const fim = Math.max(...[...source.matchAll(/<rect[^>]*x="([\d.]+)"[^>]*width="([\d.]+)"/g)].map(r => Number(r[1]) + Number(r[2])))
+    expect(fim).toBeLessThanOrEqual(W)
+  }
+  // Uma só pendência que não cabe também vira "+1", nunca uma pílula cortada.
+  expect(svgDasPilulas(QUATRO.slice(0, 1), 60).source).toContain('>+1<')
+})
+
+test('P8d. nenhum emoji nas pílulas, mesmo com ícone ou título de emoji', async ($, on) => {
+  mundo(on)
+  await progresso($, { pendencias: [{ titulo: 'Gravar intro', icone: '🎬', quem: 'seu ok' }, { titulo: 'Conferir copy', icone: '🧪' }] })
+  const ui = await montar($, 'desktop')
+  const pilulas = await pilulasDe(ui)
+  expect(String(pilulas?.props.alt)).toBe('2 pendências: Gravar intro (seu ok), Conferir copy')
+  expect(EMOJI.test(String(pilulas?.props.source))).toBe(false)
+  expect(EMOJI.test(String(pilulas?.props.alt))).toBe(false)
+  await ui.unmount()
+  expect(EMOJI.test(svgDasPilulas(QUATRO, 856).source)).toBe(false)
+})
+
+test('P9. o Stop lembra uma vez por turno de registrar pendências quando a barra fica esperando, falha ou pula; não lembra com pendencias no turno', async ($, on) => {
+  const { stop } = mundo(on)
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, { id: 'a', titulo: 'Aula 4', passos: ['um', 'dois'] })
+  await progresso($, { id: 'a', estado: 'esperando', nota: 'falta o material' })
+  const lembrete = 'Ficou algo para depois em "Aula 4"? Registre em `pendencias`; se nada ficou, encerre.'
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe(lembrete)
+  // Uma vez só, também com stop_hook_active.
+  expect((await $.classic.Stop({ stop_hook_active: true, background_tasks: [] })).block).toBeUndefined()
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  await fimDoTurnoPrincipal($, 't1')
+
+  // Com pendencias no turno, nada.
+  await $.turn.start({ text: 'segue', turnId: 't2' })
+  await progresso($, { id: 'a', estado: 'esperando', nota: 'ainda falta', pendencias: [{ titulo: 'Material da aula 4', quem: 'você' }] })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  await fimDoTurnoPrincipal($, 't2')
+
+  // Barra fechada com passo pulado: lembra; fechada com tudo feito: não.
+  await $.turn.start({ text: 'outra', turnId: 't3' })
+  await progresso($, { id: 'b', titulo: 'Deploy', passos: ['build', 'subir'] })
+  await progresso($, { id: 'b', proximo: true, estado: 'concluido' })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe('Ficou algo para depois em "Deploy"? Registre em `pendencias`; se nada ficou, encerre.')
+  await fimDoTurnoPrincipal($, 't3')
+  await $.turn.start({ text: 'mais', turnId: 't4' })
+  await progresso($, { id: 'c', titulo: 'Tudo certo', passos: ['um'] })
+  await progresso($, { id: 'c', proximo: true, estado: 'concluido' })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  await fimDoTurnoPrincipal($, 't4')
+
+  // Falhou: lembra, mas o bloqueio de um hook de baixo vem antes e o lembrete fica para o Stop seguinte do turno.
+  await $.turn.start({ text: 'quebra', turnId: 't5' })
+  await progresso($, { id: 'd', titulo: 'Importar planilha', passos: ['ler', 'gravar'] })
+  await progresso($, { id: 'd', falhou: 'ler', nota: 'sem acesso' })
+  stop.block = 'Falta Verificado:'
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBe('Falta Verificado:')
+  stop.block = undefined
+  expect((await $.classic.Stop({ stop_hook_active: true, background_tasks: [] })).block).toContain('"Importar planilha"')
+  // Só pendência aberta, sem barra deixada para depois: o Stop passa.
+  await fimDoTurnoPrincipal($, 't5')
+  await $.turn.start({ text: 'nada', turnId: 't6' })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+})
+
+test('P10. sem pendência e sem barra a banda devolve o desenho de baixo, sem Box vazio; com pendência, sem vão extra', async ($, on) => {
+  mundo(on)
+  for (const surface of SUPERFICIES) {
+    const ui = await montar($, surface)
+    const arvore = (await ui.drawn()) as No
+    expect(arvore.type).toBe('Text')
+    expect(tudoDe(arvore)).toContain('faixa vazia')
+    await ui.unmount()
+  }
+})
+
+test('P10b. de baixo vazio (um Box sem filhos), a faixa sai sozinha, sem o Box de fora com gap', async ($, on) => {
+  mundo(on, undefined, undefined, 'vazio')
+  await progresso($, { pendencias: TRES.slice(0, 1) })
+  const ui = await montar($, 'desktop')
+  const arvore = (await ui.drawn()) as No
+  expect(arvore.props?.key ?? (arvore as { key?: unknown }).key).toBe('progresso')
+  expect(arvore.props?.gap).toBeUndefined()
+  await ui.unmount()
+})
+
+test('P7c. o ícone padrão vem da palavra-chave que aparece primeiro no título', () => {
+  expect(nomeDoIcone(undefined, 'Revisar o roteiro do módulo de automação')).toBe('revisar')
+  expect(nomeDoIcone(undefined, 'Corrigir o erro do webhook de checkout')).toBe('bug')
+  expect(nomeDoIcone(undefined, 'Aprovar o orçamento do Meta')).toBe('aprovacao')
+  expect(nomeDoIcone(undefined, 'Token da API do ActiveCampaign')).toBe('acesso')
+  expect(nomeDoIcone(undefined, 'Deploy da landing nova')).toBe('publicar')
+})
+
+test('P9b. chamada com pendencias que não registra nada (sem título, ou recusada) não cala o lembrete do Stop', async ($, on) => {
+  mundo(on)
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, { id: 'a', titulo: 'Aula 4', passos: ['um', 'dois'] })
+  await progresso($, { id: 'a', estado: 'esperando' })
+  expect((await progresso($, { pendencias: [{ titulo: '   ' }] })).deny).toContain('Pendência sem título')
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toContain('"Aula 4"')
+  await fimDoTurnoPrincipal($, 't1')
+  // Só resolver também não conta como registro.
+  await $.turn.start({ text: 'segue', turnId: 't2' })
+  await progresso($, { pendencias: [{ titulo: 'Material' }] })
+  await fimDoTurnoPrincipal($, 't2')
+  await $.turn.start({ text: 'mais', turnId: 't3' })
+  await progresso($, { id: 'a', estado: 'esperando', nota: 'ainda', resolver: ['material'] })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toContain('"Aula 4"')
+})
+
+// --- Alinhamento de 23/10: aguardando, "100%" inteiro, calha de 24 e desenhos esticados -------------------------------
+
+test('G1. aguardando: rótulo próprio em azul (não o âmbar de "Esperando você"), sem som, o Stop não cobra nem lembra pendências', async ($, on) => {
+  const { sons, toasts, registradas } = mundo(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true })
+  const descricao = registradas.find(item => item.name === 'progresso')?.description ?? ''
+  expect(descricao).toContain('"esperando" é só quando depende do usuário')
+  expect(descricao).toContain('"aguardando" é quando espera um subagente ou um comando em background')
+  const prompt = await $.prompt.compose({
+    model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [FERRAMENTA], outputStyle: null, traits: [],
+  })
+  expect(prompt.sections.find(secao => secao.id === 'progresso:lista')?.text).toContain('"aguardando" se espera subagente ou background')
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, PLANO)
+  await despachar($)
+  const resposta = await progresso($, { id: 'pub', estado: 'aguardando' })
+  expect(String(resposta.result)).toContain('aguardando agente ou background')
+  expect(sons).toEqual([])
+  expect(toasts.some(texto => /Esperando você/.test(texto))).toBe(false)
+
+  const ui = await montar($, 'desktop')
+  const trilha = await trilhaDe(ui, 'Publicar página')
+  expect(trilha).toContain('class="aguardando"')
+  expect(trilha).toContain('class="ks">Aguardando agente</text>')
+  expect(trilha).not.toContain('Esperando você')
+  expect(trilha).not.toContain('class="pu"')
+  // A cor: --info azul nos dois temas, não o --warn âmbar da espera.
+  expect(trilha).toContain('.aguardando{--cor:var(--info);--marca:var(--info)}')
+  expect(trilha).toContain('--info:#8DB8EA')
+  expect(trilha).toContain('--info:#2F6DB5')
+  await ui.unmount()
+  const terminal = await montar($, 'terminal')
+  expect((await terminal.find({ type: 'Text', text: '◷' }))?.props.color).toBe('suggestion')
+  expect(await terminal.find({ type: 'Text', text: 'Aguardando agente' })).toBeDefined()
+  await terminal.unmount()
+
+  // O Stop não cobra a barra que aguarda, nem com nada em background; o lembrete de pendências também não vem.
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toBeUndefined()
+})
+
+test('G2. aguardando volta sozinha a andamento quando o último agente termina; com background no fim do turno ela fica, sem nada vira a regra do andamento', async ($, on) => {
+  mundo(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
+  await $.turn.start({ text: 'faz', turnId: 't1' })
+  await progresso($, PLANO)
+  await despachar($)
+  await progresso($, { id: 'pub', estado: 'aguardando', nota: 'revisão do hero' })
+  // O turno principal acaba com o agente em background: a barra continua aguardando, sem virar parada.
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'ag1', type: 'subagent', status: 'running', description: 'Revisar o hero' }] })
+  await fimDoTurnoPrincipal($, 't1')
+  const ui = await montar($, 'desktop')
+  expect(await trilhaDe(ui, 'Publicar página')).toContain('class="ks">Aguardando agente · revisão do hero</text>')
+  // O agente termina: nada mais roda e a barra volta a andamento, com a nota limpa.
+  await $.turn.complete({ answer: 'feito', durationMs: 10, isAborted: false, turnId: 't2', agentId: 'ag1', reason: 'answer' })
+  const depois = await trilhaDe(ui, 'Publicar página')
+  expect(depois).toContain('class="andamento"')
+  expect(depois).not.toContain('Aguardando')
+  await ui.unmount()
+  // Andamento de novo: o Stop volta a cobrar a barra aberta.
+  await $.turn.start({ text: 'segue', turnId: 't3' })
+  expect((await $.classic.Stop(SEM_FUNDO)).block).toContain('"Publicar página" (id pub)')
+
+  // Aguardando sem nada rodando no fim do turno segue a regra do andamento: para em X/Y.
+  await progresso($, { id: 'pub', estado: 'aguardando' })
+  await $.classic.Stop(SEM_FUNDO)
+  await fimDoTurnoPrincipal($, 't3')
+  const fim = await montar($, 'desktop')
+  expect(await trilhaDe(fim, 'Publicar página')).toContain('class="ks">Parou em 0/3</text>')
+  await fim.unmount()
+})
+
+test('G3. o percentual fica inteiro: "100%" num Button plain dentro de minWidth 7 (o respiro do botão não corta mais em ".."), e a coluna do relógio tem o mesmo minWidth', async ($, on) => {
+  mundo(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
+  await progresso($, PLANO)
+  await despachar($)
+  await progresso($, { id: 'pub', feitos: ['Ler briefing', 'Mapear seções', 'Montar hero'] })
+  const ui = await montar($, 'desktop')
+  const arvore = await ui.drawn()
+  const pct = noDaChave(arvore, 'pct:pub')
+  expect(filhos(pct)[0]?.props?.label).toBe('100%')
+  expect(pct?.props).toMatchObject({ minWidth: 7, flexShrink: 0 })
+  expect(pct?.props?.width).toBeUndefined()
+  // "100%" mede ~4,6 ch na fonte da banda (o "%" tem 0,96 em, o "0" que define o ch tem 0,6 em) e o respiro do Button
+  // plain soma menos de 1,5 ch: cabe nos 7 com folga.
+  const ch = larguraNativa('0')
+  expect(larguraNativa('100%') / ch + 1.5).toBeLessThan(7)
+  expect(filhos(noDaChave(arvore, 'linha:pub:ag1')).at(-1)?.props?.minWidth).toBe(7)
+  await ui.unmount()
+  // No terminal a coluna segue nas 4 células exatas de "100%" (sem respiro de botão lá).
+  const terminal = await montar($, 'terminal')
+  expect(noDaChave(await terminal.drawn(), 'pct:pub')?.props?.width).toBe(4)
+  await terminal.unmount()
+})
+
+test('G4. calha: o ícone da faixa é um Svg de 24 com o desenho a 7 px, o mesmo recuo do pino das pendências', async ($, on) => {
+  mundo(on)
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5', agentId: 'ag1' }))
+  await progresso($, PLANO)
+  await despachar($)
+  await progresso($, { pendencias: TRES })
+  const ui = await montar($, 'desktop')
+  const arvore = await ui.drawn()
+  const icone = filhos(noDaChave(arvore, 'linha:pub:ag1'))[0]
+  const pino = filhos(noDaChave(arvore, 'pendencias:topo'))[0]
+  expect(icone?.props?.width).toBe(24)
+  expect(pino?.props?.width).toBe(24)
+  expect(String(icone?.props?.source)).toMatch(/<svg [^>]*width="24"/)
+  expect(String(icone?.props?.source)).toContain('transform="translate(7 ')
+  expect(String(pino?.props?.source)).toContain('translate(7 ')
+  await ui.unmount()
 })

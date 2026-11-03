@@ -49,6 +49,9 @@ Barras de progresso acima do prompt. O modelo recebe uma ferramenta (`progresso`
 - Painel lateral "Progresso" com custo, tokens, tempo, agentes rodando, concluídos, com falha e planejados. Clicar num agente abre a conversa dele, e dá para mandar mensagem a ele por ali.
 - Som ao concluir, ao falhar e quando o modelo espera uma decisão sua.
 - Se o turno vai terminar com uma barra aberta, o mod pede ao modelo que a feche antes (uma vez por barra).
+- Estado `aguardando`: a barra espera um subagente ou um comando em background, sem som e sem cobrança do Stop.
+- Faixa de pendências acima do prompt: o que ficou para depois (material, aprovação, teste, resposta de terceiro). O modelo registra com `pendencias` e remove com `resolver`; o Stop lembra uma vez por turno quando a barra termina esperando, falha ou pula.
+- Anotações da conversa (`anotacoes`): URL publicada, ID, recurso criado ou decisão fechada, agrupadas no painel, com links clicáveis e um campo de notas livres. Segredos rotulados como senha ou chave são trocados por `[oculto]`.
 
 Comandos:
 
@@ -70,6 +73,7 @@ Uma linha de pílulas acima do campo:
 - `CTX`: contexto usado até a compactação automática, pelo limite que o Claude Code informa (275k quando ele não informa nenhum).
 - `CACHE`: tempo restante do cache de prompt (TTL de 60 minutos, fixo) e taxa de acerto.
 - `DS on/off`: só aparece com o `ds-primeiro` configurado. Clicar alterna o DS nesta sessão.
+- `Anotações`: botão com a contagem, só com o `progresso` ativo. Abre e fecha o painel de anotações.
 
 Comando: `/uso`, com `on` ou `off`.
 

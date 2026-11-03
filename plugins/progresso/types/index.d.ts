@@ -1,5 +1,8 @@
-/** Finais: concluido, erro e parada. Uma atualização qualquer reabre a barra em andamento. */
-export type Estado = 'andamento' | 'esperando' | 'erro' | 'concluido' | 'parada'
+/**
+ * Finais: concluido, erro e parada. Uma atualização qualquer reabre a barra em andamento. `esperando` depende do
+ * usuário; `aguardando` espera um subagente ou um comando em background e volta a andamento quando nada mais roda.
+ */
+export type Estado = 'andamento' | 'esperando' | 'aguardando' | 'erro' | 'concluido' | 'parada'
 
 export type Passo = {
   titulo: string
@@ -67,6 +70,68 @@ export type Faixa = {
   comando?: string
 }
 
+/** Os ícones de traço da faixa de pendências (desenhados em hooks/icones.ts). */
+export type IconePendencia =
+  | 'espera'
+  | 'video'
+  | 'automacao'
+  | 'publicar'
+  | 'acesso'
+  | 'pagamento'
+  | 'imagem'
+  | 'email'
+  | 'bug'
+  | 'dados'
+  | 'revisar'
+  | 'documento'
+  | 'aprovacao'
+
+/** Algo que ficou para depois: fica na faixa de pendências até o modelo resolver. */
+export type Pendencia = {
+  titulo: string
+  /** Nome do ícone de traço (icones.ts); o padrão sai do título por palavra-chave, ou espera. */
+  icone: IconePendencia
+  /** De quem depende, livre: "você", "seu ok", "Claude", "Meta"; vazio quando não veio. */
+  quem: string
+  criadaEm: number
+}
+
+/** O que a conversa guardou para o usuário achar depois: URL publicada, ID, recurso criado, decisão fechada. */
+export type Anotacao = {
+  titulo: string
+  /** Texto livre; uma URL vira link no painel. */
+  valor: string
+  /** Agrupa no painel ("Curso · páginas"); vazio fica sem grupo. */
+  grupo: string
+  criadaEm: number
+}
+
+/** O painel "Anotações": aberto, o item em edição ou à espera da confirmação de apagar, e os rascunhos dos campos. */
+export type JanelaAnotacoes = {
+  aberto: boolean
+  /** Título do item com os campos de edição abertos; null sem edição. */
+  editando: string | null
+  /** Título do item que pediu apagar e espera a confirmação; null sem pedido. */
+  apagando: string | null
+  novo: { titulo: string; valor: string; grupo: string }
+  edicao: { titulo: string; valor: string; grupo: string }
+  /** O formulário de nova anotação aberto; fechado, fica só o "+ Nova anotação". */
+  formulario: boolean
+  /** Título do item com as ações (copiar, editar, apagar) abertas pelo "⋯"; null com todas fechadas. */
+  menu: string | null
+  /** Os grupos recolhidos, pelo nome como o painel mostra ("" é o das anotações sem grupo). Guardado por conversa. */
+  recolhidos: string[]
+  /** A seção de pendências recolhida. Guardado por conversa. */
+  pendenciasRecolhidas: boolean
+  /** As notas livres recolhidas. Guardado por conversa. */
+  notasRecolhidas: boolean
+  /** A altura escolhida do campo das notas livres, em linhas (4 a 40). Guardada por conversa. */
+  notasAltura: number
+  /** As linhas do texto das notas livres no último desenho: muda só quando o número de linhas muda, e só então o
+   * painel redesenha enquanto o usuário digita. O texto fica fora de átomo (ver register). */
+  notasLinhas: number
+}
+
 /** Uma linha da conversa de um agente no painel lateral. */
 export type Fala = {
   /** agente: o que ele escreveu; entrada: o que ele recebeu; voce: o que o usuário mandou pelo painel; ferramenta: uma chamada dele. */
@@ -84,11 +149,9 @@ export type Painel = {
   aviso: string
 }
 
-/** O painel "Progresso" na sessão: se está aberto, se o usuário o fechou e se já abriu sozinho. */
+/** O painel "Progresso" na sessão: se está aberto. Ele só abre a pedido do usuário. */
 export type Janela = {
   aberto: boolean
-  fechadoPeloUsuario: boolean
-  abriuSozinho: boolean
   /** O grupo "Concluídos" dos agentes aberto. */
   concluidos: boolean
   /** O Recolher do painel: só os títulos dos grupos. */
@@ -102,6 +165,13 @@ declare module 'claude-code' {
     progresso: {
       barras: Barra[]
       faixas: Faixa[]
+      /** As pendências da conversa, guardadas no store com as barras. */
+      pendencias: Pendencia[]
+      /** As anotações da conversa, guardadas no store com as pendências. */
+      anotacoes: Anotacao[]
+      janelaAnotacoes: JanelaAnotacoes
+      /** A faixa de pendências expandida. */
+      pendenciasAbertas: boolean
       oculto: boolean
       painel: Painel
       janela: Janela

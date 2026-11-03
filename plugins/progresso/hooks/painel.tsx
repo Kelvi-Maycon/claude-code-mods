@@ -9,7 +9,7 @@ import { desenhoDoTipo, glifoDe, svgDoIcone } from './icones'
 import type { Desenho, Variante } from './icones'
 import { comMaiuscula, contar, cortar, ferramentaCurta, nivelDe, relogio, tokensCurtos, usdCurto } from './modelo'
 import type { Perfil } from './modelo'
-import { svgBarraCor, svgBarraIndeterminada, svgDaMetrica, svgDoCartao, svgDoCartaoTempo, svgDoEstado, svgDoFio, svgDoPasso } from './svg'
+import { TEMPO_COLUNAS, TEMPO_PX, svgBarraCor, svgBarraIndeterminada, svgDaMetrica, svgDoCartao, svgDoEstado, svgDoFio, svgDoPasso } from './svg'
 import type { EstadoDoPasso, NomeDoEstado } from './svg'
 
 type Elementos = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> & { Svg?: Elements['desktop']['Svg'] }
@@ -76,6 +76,7 @@ const ICONE: Record<NomeDoEstado, Icone> = {
 const ICONE_DA_BARRA: Record<Barra['estado'], Icone> = {
   andamento: ICONE.rodando,
   esperando: { ...ICONE.aprovacao, nome: 'esperando você' },
+  aguardando: { ...ICONE.planejado, nome: 'aguardando agente', cor: 'suggestion' },
   erro: ICONE.falhou,
   concluido: ICONE.concluida,
   parada: ICONE.parada,
@@ -188,14 +189,24 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
     )
   }
 
-  // A situação e os números: no desktop um Svg da largura da barra, com os números tabulares encostados na ponta dela;
-  // no terminal, texto nas duas pontas da linha.
+  // A situação e os números: no desktop um Svg com os números tabulares na ponta e o tempo num Text à direita, que
+  // anda a cada tique sem trocar a imagem; no terminal, texto nas duas pontas da linha.
   const metricaDoItem = (item: Item) => {
     if (!item.esquerda && !item.direita && !item.tempo) return false
     const tempo = item.tempo ? relogio((item.tempo.fim ?? agora) - item.tempo.inicio) : ''
     if (Svg) {
-      const m = svgDaMetrica(item.chave, item.esquerda ?? { texto: '' }, item.direita ?? '', item.tempo ?? { inicio: agora, fim: agora }, larguraBarraPx, agora)
-      return <Svg key={`n:${item.chave}`} source={m.source} alt={m.alt} width={larguraBarraPx} height={m.altura} />
+      const largura = tempo ? larguraBarraPx - TEMPO_PX - 8 : larguraBarraPx
+      const m = svgDaMetrica(item.esquerda ?? { texto: '' }, item.direita ?? '', largura)
+      return (
+        <Box key={`n:${item.chave}`} flexDirection="row" alignItems="center" columnGap={1}>
+          <Svg key={`ns:${item.chave}`} source={m.source} alt={m.alt} width={largura} height={m.altura} />
+          {!!tempo && (
+            <Box key={`nt:${item.chave}`} width={TEMPO_COLUNAS} flexShrink={0} justifyContent="flex-end">
+              <Text dimColor>{tempo}</Text>
+            </Box>
+          )}
+        </Box>
+      )
     }
     const direita = [item.direita, tempo].filter(Boolean).join(' ')
 
@@ -338,6 +349,7 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
     const fim: Record<Barra['estado'], string> = {
       andamento: `faltam ${faltam}`,
       esperando: 'esperando você',
+      aguardando: 'aguardando agente',
       erro: 'erro',
       concluido: 'concluído',
       parada: 'parada',
@@ -359,7 +371,7 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
       tempo: { inicio: barra.criadaEm, fim: barra.fechadaEm },
       barra: {
         tipo: 'fracao',
-        fracao: total === 0 ? 0 : feito / total,
+        fracao: barra.estado === 'concluido' ? 1 : total === 0 ? 0 : feito / total,
         cor: barra.estado === 'erro' ? VERMELHO : barra.estado === 'esperando' ? '#F2B53A' : LARANJA,
         corTerminal: barra.estado === 'erro' ? 'error' : barra.estado === 'esperando' ? 'warning' : 'claude',
         brilho: barra.estado === 'andamento',
@@ -428,13 +440,21 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
       : [...vao(`vao:${chave}`, VAO_CABECALHO), ...itens.flatMap((item, i) => [...(i > 0 ? [fio(`fio:${chave}:${i}`)] : []), linhaDoItem(item)])]),
   ]
 
-  // No desktop cada cartão é um Svg (o canto arredondado só existe em Svg), um terço da largura menos o vão.
+  // No desktop cada cartão é um Svg (o canto arredondado só existe em Svg), um terço da largura menos o vão. O Tempo
+  // leva o valor num Text sobre o desenho: no Svg ele trocaria a imagem a cada segundo.
   const larguraCartao = Math.max(60, Math.floor((util - 16) / 3))
   const cartao = (chave: string, rotulo: string, valor: string) =>
     Svg ? (
-      <Svg
-        key={chave}
-        source={chave === 'tempo' && barra ? svgDoCartaoTempo(rotulo, barra.criadaEm, barra.fechadaEm, larguraCartao, 64, agora) : svgDoCartao(rotulo, valor, larguraCartao, 64)} alt={`${rotulo}: ${valor}`} width={larguraCartao} height={64} />
+      chave === 'tempo' ? (
+        <Box key={chave} position="relative">
+          <Svg key="tempo-fundo" source={svgDoCartao(rotulo, '', larguraCartao, 64)} alt={rotulo} width={larguraCartao} height={64} />
+          <Box key="tempo-valor" position="absolute" left={1} bottom={0}>
+            <Text bold>{valor}</Text>
+          </Box>
+        </Box>
+      ) : (
+        <Svg key={chave} source={svgDoCartao(rotulo, valor, larguraCartao, 64)} alt={`${rotulo}: ${valor}`} width={larguraCartao} height={64} />
+      )
     ) : (
       <Box key={chave} flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} flexGrow={1}>
         <Text dimColor>{rotulo}</Text>
@@ -445,7 +465,7 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
   if (vazio) {
     return (
       <Box flexDirection="column" gap={1} paddingX={margem}>
-        <Text key="vazio" dimColor>Nenhuma tarefa ainda. A barra de progresso aparece aqui quando o modelo cria uma.</Text>
+        <Text key="vazio" dimColor>Nenhuma tarefa ainda. A lista de execução aparece aqui quando o modelo cria uma.</Text>
         <Button key="fechar-painel" role="dismiss" label="Fechar" onPress={() => acoes.fechar()} />
       </Box>
     )
@@ -456,7 +476,7 @@ export function desenharPainel(els: Elementos, dados: DadosDoPainel, acoes: Acoe
       {barra ? (
         <Text key="titulo" bold>{cortar(barra.titulo, Math.max(12, colunas - 2))}</Text>
       ) : (
-        <Text key="titulo" dimColor>Nenhuma tarefa ainda. A barra de progresso aparece aqui quando o modelo cria uma.</Text>
+        <Text key="titulo" dimColor>Nenhuma tarefa ainda. A lista de execução aparece aqui quando o modelo cria uma.</Text>
       )}
       {barra && (
         <Box key="cartoes" flexDirection={colunas < 36 ? 'column' : 'row'} columnGap={1}>

@@ -1,18 +1,32 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderElement, Timer, TurnUsage } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement, Timer, TurnUsage } from 'claude-code'
 
-import type { Barra, Estado, Fala, Faixa } from '../types'
+import type { Anotacao, Barra, Estado, Fala, Faixa, JanelaAnotacoes, Pendencia } from '../types'
+import {
+  NOTAS_INICIAL,
+  alturaDasNotas,
+  aplicarAnotacoes,
+  comoAnotacao,
+  contagemDeAnotacoes,
+  editarAnotacao,
+  gravarAnotacao,
+  linhasDe,
+  listaDasNotas,
+  pedeAnotacoes,
+} from './anotacoes'
 import {
   MAX_FALAS,
   PERFIS,
   adotar,
   aplicar,
+  aplicarPendencias,
   automatica,
   barraEmFoco,
   barraParaFaixa,
   comandoLegivel,
   comoBarra,
   comoFaixa,
+  comoPendencia,
   cortar,
   duracao,
   esforcoPt,
@@ -22,22 +36,46 @@ import {
   fimDoTurno,
   finalizada,
   modeloCurto,
+  pedePendencias,
   pendentes,
+  paraDepois,
+  textoDoLembrete,
   percentual,
   perfilDoArquivo,
   relogioPreciso,
   restaurada,
   resumoDaBarra,
+  retomarAguardando,
   textoDaLinha,
   textoDoBloqueio,
   tipoDoPasso,
   vistas,
 } from './modelo'
 import type { Perfil, Resposta, Tom } from './modelo'
-import { desenhoDoTipo, glifoDe } from './icones'
+import { ICONES_PENDENCIA, desenhoDoTipo, glifoDe } from './icones'
 import { desenharPainel } from './painel'
+import { desenharAnotacoes } from './painel-anotacoes'
+import type { Campo } from './painel-anotacoes'
 import { contextoDe, custoDe, janelaDe, somarUsd } from './precos'
-import { ALT_TRILHA, DESLIZE_MS, svgDaTrilha, svgDasFaixas, svgDoDivisor, svgDoRotulo } from './svg'
+import {
+  ALT_PENDENCIA,
+  ALT_PILULAS,
+  ALT_TRILHA,
+  DESLIZE_MS,
+  LARGURA_DA_CALHA,
+  TEMPO_COLUNAS,
+  TEMPO_PX,
+  larguraDoQuem,
+  previaDasPendencias,
+  svgDasPilulas,
+  svgDaTrilha,
+  svgDasFaixas,
+  svgDoDivisor,
+  svgDoIconeDaPendencia,
+  svgDoQuem,
+  svgDoRespiro,
+  svgDoRotulo,
+} from './svg'
 
 const FERRAMENTA = 'mcp__progresso__progresso'
 const MAX_FAIXAS = 40
@@ -45,34 +83,64 @@ const MAX_SESSOES = 20
 const MAX_VISTAS = 4
 // Espaço da largura de um dígito: o percentual ocupa sempre três casas.
 const ESPACO_DE_DIGITO = String.fromCharCode(0x2007)
-// A área acima do prompt no app desktop não tem 8 px por coluna: medida no app, fica entre 7,69 e 7,8 px por
-// coluna, e a conta de 8 px estourava a linha (as imagens encolhiam e uma
-// pílula perdia a borda). A estimativa fica no menor valor medido e só dimensiona os desenhos. A superfície não
-// informa a largura em px (só colunas), então o erro da estimativa não pode virar vão entre a trilha e o
-// percentual: o percentual e o "abrir" vêm logo depois da trilha, e a folga fica na borda externa.
-const larguraUtil = (colunas: number) => Math.max(320, Math.floor(colunas * 7.69) - 2)
-// À direita da trilha, o vão e a coluna do percentual ("100%"); as faixas vão até o fim dela.
-const VAO = 8
-const COLUNA_PCT = 32
-// O app desenha a imagem em células de 8 px: trilha e faixas fecham num múltiplo de 8 para não crescer na tela.
-const naGrade = (px: number) => Math.floor(px / 8) * 8
+// No desktop a banda não sabe a própria largura em px: `bodyColumns` sai da largura do pane dividida pelo avanço da
+// fonte de código, e o Box do app mede em `ch` da fonte da banda (7,69 a 8,5 px por coluna nos prints). Por isso
+// trilha, faixas, divisor e pílulas são Svg sem `width`, com geometria em %, num Box em coluna que estica (`esticado`):
+// a imagem vai até a coluna da direita, qualquer que seja a largura real. A conta em px abaixo só estima onde cabe
+// texto (pílula, estado, nome do agente), no menor px por coluna medido (908 px com 118 colunas), e erra para menos:
+// o que sobra fica em branco, nunca cortado.
+const PX_POR_COLUNA_MIN = 7.69
+/** A coluna da direita em colunas: o "%" das barras e o relógio das faixas ("1:02:03"). "100%" ocupa ~4,6 ch e o
+ * Button plain soma o respiro (pad.xs) dos dois lados; com 7 os dois cabem e as duas colunas fecham no mesmo x. */
+export const COLUNA_DIREITA = TEMPO_COLUNAS
+/** A coluna do número da faixa: "12" ou "+3" com o respiro do Button; minWidth, então nunca corta. */
+const COLUNA_DO_NUMERO = 4
+
+/** Estimativas em px (conservadoras) da banda, da trilha e da faixa, para decidir texto; a geometria não usa. */
+export function larguras(colunas: number) {
+  const px = (n: number) => Math.floor(n * PX_POR_COLUNA_MIN)
+  const total = Math.max(320, px(colunas))
+  const trilha = Math.max(120, total - px(COLUNA_DIREITA + 1))
+  const faixa = Math.max(120, total - LARGURA_DA_CALHA - px(1 + COLUNA_DO_NUMERO + 1 + 1 + COLUNA_DIREITA))
+
+  return { trilha, faixa, total }
+}
 const SILENCIO_MS = 3000
 // Quanto um nome de ferramenta fica na faixa antes de dar lugar ao seguinte: chamadas paralelas trocavam em milissegundos.
 const TROCA_MS = 1000
 // Quanto a banda espera o desenho dos mods de baixo. A espera em `next` não conta no orçamento de 10 s do hook nesta
-// versão do engine, mas contava em versões anteriores; passado o limite, a banda
+// versão do engine, mas contava numa anterior (um "ran past its 10s budget" em 2.1.288); passado o limite, a banda
 // sai sem o que eles desenham, em vez de não sair. Fica abaixo do tique de 1 s: um desenho que esperasse mais seria
 // substituído pelo do tique seguinte antes de sair.
 const ESPERA_ABAIXO_MS = 800
 const SO_DA_PRINCIPAL =
-  'ok: a barra de progresso é só da conversa principal e não foi alterada. O seu progresso já aparece na sua faixa; não chame esta ferramenta de novo.'
+  'ok: a lista de execução é só da conversa principal e não foi alterada. O seu progresso já aparece na sua faixa; não chame esta ferramenta de novo.'
 
 const barras = atom({ plugin: 'progresso', key: 'barras' } as const, [])
 const faixas = atom({ plugin: 'progresso', key: 'faixas' } as const, [])
+const pendencias = atom({ plugin: 'progresso', key: 'pendencias' } as const, [])
+const anotacoes = atom({ plugin: 'progresso', key: 'anotacoes' } as const, [])
+const CAMPOS_VAZIOS = { titulo: '', valor: '', grupo: '' }
+const JANELA_DAS_ANOTACOES: JanelaAnotacoes = {
+  aberto: false,
+  editando: null,
+  apagando: null,
+  novo: CAMPOS_VAZIOS,
+  edicao: CAMPOS_VAZIOS,
+  formulario: false,
+  menu: null,
+  recolhidos: [],
+  pendenciasRecolhidas: false,
+  notasRecolhidas: false,
+  notasAltura: NOTAS_INICIAL,
+  notasLinhas: 0,
+}
+const janelaAnotacoes = atom({ plugin: 'progresso', key: 'janelaAnotacoes' } as const, JANELA_DAS_ANOTACOES)
+const pendenciasAbertas = atom({ plugin: 'progresso', key: 'pendenciasAbertas' } as const, false)
 const oculto = atom({ plugin: 'progresso', key: 'oculto' } as const, false)
 /** O agente aberto no painel e a cauda da conversa dele; agente null mostra a visão geral. */
 const painel = atom({ plugin: 'progresso', key: 'painel' } as const, { agente: null, titulo: '', falas: [], aviso: '' })
-const JANELA_INICIAL = { aberto: false, fechadoPeloUsuario: false, abriuSozinho: false, concluidos: true, recolhido: false, passosAbertos: false }
+const JANELA_INICIAL = { aberto: false, concluidos: true, recolhido: false, passosAbertos: false }
 const janela = atom({ plugin: 'progresso', key: 'janela' } as const, JANELA_INICIAL)
 const turno = atom({ plugin: 'progresso', key: 'turno' } as const, '')
 const sessao = atom({ plugin: 'progresso', key: 'sessao' } as const, '')
@@ -83,14 +151,17 @@ const SONS = {
   concluido: 'sounds/concluido.wav',
 } as const
 
-const REGRA = `# Barra de progresso
-Em tarefa com vários passos, use \`${FERRAMENTA}\` para mostrar o plano ao usuário. Crie a barra uma vez, com o plano inteiro, e atualize quando um passo terminar ou falhar. Antes de encerrar o turno, feche-a: "concluido", "esperando" se precisa de resposta do usuário, ou falhou. Só a conversa principal usa; subagente não chama.`
+const REGRA = `# Lista de execução
+Tarefa com 2+ ações usa \`${FERRAMENTA}\` como lista de execução: crie uma vez com o plano inteiro e atualize a cada mudança (proximo, feitos, ativo, falhou). Antes de encerrar o turno, feche a barra ("concluido", "esperando" só se depende do usuário, "aguardando" se espera subagente ou background, ou falhou) e registre em \`pendencias\` o que ficou para depois (usuário, terceiro, outro turno); feito, \`resolver\`. Em \`anotacoes\`, o que o usuário buscaria depois (URL, ID, recurso, decisão) ou mandar salvar; nunca segredo. Não liste no chat; subagente não chama.`
 
-const DESCRICAO = `Barra de progresso que o usuário vê acima do prompt.
+const DESCRICAO = `Lista de execução que o usuário vê acima do prompt.
 Criar: {id, titulo, etapas:[{nome, passos:["..."]}]} ou {id, titulo, passos:["..."]}.
-Atualizar com o mesmo id: {proximo:true} conclui o passo ativo e inicia o seguinte; {feitos:["..."], ativo:"..."} marca passos pelo título (aproximado) ou pelo número, a partir de 1; {falhou:"passo", nota:"motivo"}; {estado:"esperando"|"concluido"|"erro"|"andamento", nota}.
-Feche antes de encerrar o turno: {proximo:true, estado:"concluido"}; "esperando" quando depende do usuário. Passos abertos numa barra concluída viram pulados.
-Reenviar etapas reescreve o plano e preserva os passos já feitos. Só a conversa principal usa; subagente não chama.`
+Atualizar com o mesmo id: {proximo:true} conclui o passo ativo e inicia o seguinte; {feitos:["..."], ativo:"..."} marca passos pelo título (aproximado) ou pelo número, a partir de 1; {falhou:"passo", nota:"motivo"}; {estado:"esperando"|"aguardando"|"concluido"|"erro"|"andamento", nota}.
+"esperando" é só quando depende do usuário (resposta, aprovação, material). "aguardando" é quando espera um subagente ou um comando em background: não toca som, o Stop não cobra e volta sozinha a andamento quando nada mais roda.
+Feche antes de encerrar o turno: {proximo:true, estado:"concluido"}; "esperando" quando depende do usuário; "aguardando" quando o turno acaba com agente ou background rodando. Passos abertos numa barra concluída viram pulados.
+Reenviar etapas reescreve o plano e preserva os passos já feitos. Só a conversa principal usa; subagente não chama.
+Pendências (sem id, ou junto de uma atualização): o que ficou para depois e não é passo ativo do turno. Registre antes de encerrar, no turno em que surgiu, tudo que depende do usuário (material, aprovação, teste), de terceiro (Meta, CI, outro time) ou de um turno seguinte. Ficam numa faixa fixa acima do prompt, entre turnos, até serem resolvidas, e não seguram o fim do turno: não repita a lista no chat. Adicionar: {pendencias:[{titulo, icone?, quem?}]}, quem livre ("você", "seu ok", "Claude", "Meta"), icone um de: ${ICONES_PENDENCIA.join(', ')} (sem ele, sai do título). Resolver ao concluir: {resolver:["título aproximado" ou "2"]}; resolvida some da faixa. Listar: {listar:true}.
+Anotações (sem id, ou junto de uma atualização): o que o usuário precisaria procurar depois, como URL publicada, ID, nome de recurso criado ou decisão fechada, e tudo que ele mandar salvar. Nunca senha, token ou segredo. Ficam no painel Anotações da conversa, sobrevivem ao /resume; não repita no chat. Adicionar: {anotacoes:[{titulo, valor, grupo?}]}, grupo livre ("Curso · páginas"); título repetido atualiza o item. Apagar: {esquecer:["título aproximado" ou "2"]}. Listar: {listarAnotacoes:true}.`
 
 const ESQUEMA = {
   type: 'object',
@@ -110,31 +181,90 @@ const ESQUEMA = {
     feitos: { type: 'array', items: { type: 'string' } },
     ativo: { type: 'string' },
     falhou: { type: 'string' },
-    estado: { type: 'string', enum: ['andamento', 'esperando', 'erro', 'concluido'] },
+    estado: {
+      type: 'string',
+      enum: ['andamento', 'esperando', 'aguardando', 'erro', 'concluido'],
+      description: 'esperando: depende do usuário. aguardando: espera subagente ou comando em background.',
+    },
     nota: { type: 'string' },
+    pendencias: {
+      type: 'array',
+      description: 'Pendências a adicionar: o que ficou para depois, fora dos passos do turno.',
+      items: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string' },
+          icone: { type: 'string', description: `Nome do ícone: ${ICONES_PENDENCIA.join(', ')}. Sem ele, sai do título.` },
+          quem: { type: 'string', description: 'De quem depende: "você", "seu ok", "Claude"...' },
+        },
+        required: ['titulo'],
+      },
+    },
+    resolver: { type: 'array', items: { type: 'string' }, description: 'Pendências resolvidas, pelo título (aproximado) ou número.' },
+    listar: { type: 'boolean', description: 'Devolve a lista de pendências.' },
+    anotacoes: {
+      type: 'array',
+      description: 'Anotações a guardar: URL publicada, ID, recurso criado, decisão fechada. Título repetido atualiza.',
+      items: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string' },
+          valor: { type: 'string', description: 'Texto livre; URL vira link no painel. Nunca senha ou segredo.' },
+          grupo: { type: 'string', description: 'Agrupa no painel, ex.: "Curso · páginas".' },
+        },
+        required: ['titulo', 'valor'],
+      },
+    },
+    esquecer: { type: 'array', items: { type: 'string' }, description: 'Anotações a apagar, pelo título (aproximado) ou número.' },
+    listarAnotacoes: { type: 'boolean', description: 'Devolve a lista de anotações.' },
   },
-  required: ['id'],
 }
 
 // No terminal a cor vem da chave do tema, que acompanha claro e escuro; no desktop, das cores do desenho (svg.ts).
 const COR_TERMINAL: Record<Tom, string | undefined> = {
   andamento: 'permission',
   esperando: 'warning',
+  aguardando: 'suggestion',
   erro: 'error',
   concluido: 'success',
   parada: 'inactive',
   neutro: undefined,
 }
-const ICONE: Record<Tom, string> = { andamento: '✻', esperando: '◆', erro: '✕', concluido: '✓', parada: '■', neutro: '○' }
+const ICONE: Record<Tom, string> = { andamento: '✻', esperando: '◆', aguardando: '◷', erro: '✕', concluido: '✓', parada: '■', neutro: '○' }
 const QUEM = { agente: 'agente', entrada: 'recebido', voce: 'você' } as const
 const FIM_DO_TURNO = { answer: 'concluida', aborted: 'parada', refusal: 'falhou', error: 'falhou' } as const
 const FIM_DA_TAREFA: Record<string, Faixa['estado']> = { completed: 'concluida', failed: 'falhou', killed: 'parada', stopped: 'parada' }
 
 type Som = keyof typeof SONS
-type Sessoes = Record<string, { em: number; barras: Partial<Barra>[]; faixas?: Partial<Faixa>[] }>
+/** O que o painel de anotações recolheu na conversa: os grupos, pelo nome, e a seção de pendências. */
+type Recolhidos = { grupos: string[]; pendencias: boolean }
+/** As notas livres da conversa: o texto do usuário, a altura escolhida do campo e se a seção está recolhida. */
+type NotasLivres = { texto: string; altura: number; recolhida: boolean }
+type Sessoes = Record<
+  string,
+  {
+    em: number
+    barras: Partial<Barra>[]
+    faixas?: Partial<Faixa>[]
+    pendencias?: Partial<Pendencia>[]
+    anotacoes?: Partial<Anotacao>[]
+    recolhidos?: Partial<Recolhidos>
+    notasLivres?: Partial<NotasLivres>
+  }
+>
 
 let ultimoSom = 0
 let gravacao: Promise<void> = Promise.resolve()
+/**
+ * O texto das notas livres da sessão, fora de átomo: o onInput de cada tecla grava aqui e no store sem redesenhar o
+ * painel. Um redesenho manda `value` ao campo, e um `value` atrasado em relação ao que o usuário já digitou trocaria o
+ * texto e o cursor. O painel só redesenha quando o número de linhas muda (o campo cresce), e aí lê o texto daqui.
+ * null: ainda não lido do store nesta sessão (processo novo, reload a quente ou outra conversa).
+ */
+let textoLivre: string | null = null
+/** Uma gravação das notas em voo; `notasSujas` pede mais uma ao fim dela, com o texto mais novo. */
+let notasEmVoo = false
+let notasSujas = false
 let demo: Timer[] = []
 let assentaEm = 0
 // O relógio de 1 s da banda e do painel: nasce no primeiro evento que precisa dele, também depois de um reload.
@@ -145,15 +275,18 @@ const proximaFerramenta = new Map<string, string>()
 const encerrados = new Set<string>()
 // O turno em que cada barra já recebeu o pedido do Stop: um por barra por turno.
 const bloqueadas = new Map<string, string>()
+// O turno em que a conversa principal mandou \`pendencias\`, e o último em que o Stop lembrou de registrá-las: um por turno.
+let pendenciasNoTurno = ''
+let lembrado = ''
 // O que o último Stop da conversa principal contou em background, no turno dele.
 let fundoNoStop = { turno: '', n: -1 }
 
 const demonstracao = (id: string) => id.startsWith('demo-')
 
 // Modelo e esforço de cada tipo de agente: a tabela de PERFIS, trocada pelo frontmatter de ~/.claude/agents quando ele
-// é lido no session.start. Os tipos padrão do Claude Code, que não têm arquivo, também nomeiam passos planejados.
+// é lido no session.start. Os tipos sem arquivo (general-purpose, Explore, Plan) também nomeiam passos planejados.
 let perfis: Record<string, Perfil> = { ...PERFIS }
-const TIPOS_SEM_ARQUIVO = ['general-purpose', 'Explore', 'Plan', 'claude', 'fork']
+const TIPOS_SEM_ARQUIVO = ['general-purpose', 'Explore', 'Plan']
 
 async function lerPerfis($: EngineInterface) {
   const casa = await $.env.get('HOME').catch(() => undefined)
@@ -182,9 +315,12 @@ function planejadosDe(barra: Barra | undefined) {
   })
 }
 
-/** Um toast sempre; o som, no máximo um a cada SILENCIO_MS. */
+/** Um toast sempre; o som, no máximo um a cada SILENCIO_MS, nunca ao concluir e nunca dentro do OpenBot. */
 async function avisar($: EngineInterface, som: Som, texto: string | null) {
   if (texto) $.ui.toast(texto)
+  if (som === 'concluido') return
+  const cliente = await $.env.get('CLAUDE_AGENT_SDK_CLIENT_APP').catch(() => undefined)
+  if (cliente?.startsWith('openbot')) return
   const agora = await $.clock.now()
   if (agora - ultimoSom < SILENCIO_MS) return
   ultimoSom = agora
@@ -218,8 +354,24 @@ function guardar($: EngineInterface) {
       const id = await $.session.id()
       const lista = (await read($, barras)).filter(barra => !demonstracao(barra.id))
       const vivas = (await read($, faixas)).filter(faixa => !demonstracao(faixa.id))
+      const abertas = await read($, pendencias)
+      const notas = await read($, anotacoes)
+      const { recolhidos, pendenciasRecolhidas, notasAltura, notasRecolhidas } = await read($, janelaAnotacoes)
       const sessoes = { ...(((await $.store.get('sessoes')) ?? {}) as Sessoes) }
-      if (lista.length > 0 || vivas.length > 0) sessoes[id] = { em: await $.clock.now(), barras: lista, faixas: vivas }
+      // Texto ainda não lido nesta sessão: fica o que o store tem.
+      const livre = textoLivre ?? sessoes[id]?.notasLivres?.texto ?? ''
+      const comNotasLivres = livre !== '' || notasAltura !== NOTAS_INICIAL || notasRecolhidas
+      if (lista.length > 0 || vivas.length > 0 || abertas.length > 0 || notas.length > 0 || comNotasLivres) {
+        sessoes[id] = {
+          em: await $.clock.now(),
+          barras: lista,
+          faixas: vivas,
+          pendencias: abertas,
+          anotacoes: notas,
+          ...(recolhidos.length > 0 || pendenciasRecolhidas ? { recolhidos: { grupos: recolhidos, pendencias: pendenciasRecolhidas } } : {}),
+          ...(comNotasLivres ? { notasLivres: { texto: livre, altura: notasAltura, recolhida: notasRecolhidas } } : {}),
+        }
+      }
       else delete sessoes[id]
       const recentes = Object.entries(sessoes)
         .sort((a, b) => b[1].em - a[1].em)
@@ -241,7 +393,8 @@ async function restaurarSessao($: EngineInterface) {
   if ((await read($, sessao)) === id) return
   await update($, sessao, () => id)
   const agora = await $.clock.now()
-  const emMemoria = (await read($, barras)).length > 0 || (await read($, faixas)).length > 0
+  const emMemoria =
+    (await read($, barras)).length > 0 || (await read($, faixas)).length > 0 || (await read($, pendencias)).length > 0 || (await read($, anotacoes)).length > 0
   if (emMemoria) {
     await update($, barras, lista => lista.map(barra => comoBarra(barra, agora)))
     await update($, faixas, lista => lista.map(faixa => comoFaixa(faixa, agora)))
@@ -252,6 +405,71 @@ async function restaurarSessao($: EngineInterface) {
   const volta = restaurada(salvas.barras ?? [], salvas.faixas ?? [], agora)
   await update($, barras, () => volta.barras)
   await update($, faixas, () => volta.faixas)
+  // Pendência não para com o processo: volta como estava.
+  const guardadas = (salvas.pendencias ?? []).flatMap(item => comoPendencia(item, agora) ?? [])
+  if (guardadas.length > 0) await update($, pendencias, () => guardadas)
+  const notas = (salvas.anotacoes ?? []).flatMap(item => comoAnotacao(item, agora) ?? [])
+  if (notas.length > 0) await update($, anotacoes, () => notas)
+  const grupos = (salvas.recolhidos?.grupos ?? []).filter((grupo): grupo is string => typeof grupo === 'string')
+  const pendenciasRecolhidas = salvas.recolhidos?.pendencias === true
+  if (grupos.length > 0 || pendenciasRecolhidas) await update($, janelaAnotacoes, atual => ({ ...atual, recolhidos: grupos, pendenciasRecolhidas }))
+  const livres = salvas.notasLivres
+  if (livres) {
+    textoLivre = typeof livres.texto === 'string' ? livres.texto : ''
+    const altura = typeof livres.altura === 'number' ? alturaDasNotas(Math.round(livres.altura), 0) : NOTAS_INICIAL
+    await update($, janelaAnotacoes, atual => ({ ...atual, notasAltura: altura, notasRecolhidas: livres.recolhida === true, notasLinhas: linhasDe(textoLivre ?? '') }))
+  }
+}
+
+/** O texto das notas livres da sessão: o da memória ou, na primeira leitura, o do store. */
+async function lerNotasLivres($: EngineInterface) {
+  if (textoLivre !== null) return textoLivre
+  const id = await $.session.id()
+  const salvo = ((await $.store.get('sessoes')) as Sessoes | undefined)?.[id]?.notasLivres?.texto
+  textoLivre = typeof salvo === 'string' ? salvo : ''
+
+  return textoLivre
+}
+
+/** Grava as notas livres: uma gravação por vez, e a última tecla sempre entra numa gravação depois dela. */
+async function guardarNotas($: EngineInterface) {
+  if (notasEmVoo) return void (notasSujas = true)
+  notasEmVoo = true
+  try {
+    do {
+      notasSujas = false
+      await guardar($)
+    } while (notasSujas)
+  } finally {
+    notasEmVoo = false
+  }
+}
+
+/** Cada mudança do texto: memória e store, sem redesenho; redesenha só quando o número de linhas muda (o campo cresce). */
+async function mudarNotasLivres($: EngineInterface, texto: string) {
+  textoLivre = texto
+  const linhas = linhasDe(texto)
+  if ((await read($, janelaAnotacoes)).notasLinhas !== linhas) await update($, janelaAnotacoes, atual => ({ ...atual, notasLinhas: linhas }))
+  await guardarNotas($)
+}
+
+/** O texto do aviso quando a chamada abre um cartão do app que espera o usuário; null quando não espera. */
+function cartaoDeDecisao(ferramenta: string, entrada: Record<string, unknown>): string | null {
+  const texto = (valor: unknown) => (typeof valor === 'string' && valor.trim() ? valor.trim() : null)
+  switch (ferramenta) {
+    case 'mcp__ccd_turn__wrap_up':
+      return texto(entrada.ask)
+    case 'ExitPlanMode':
+      return 'aprovar o plano'
+    case 'mcp__ccd_session__start_session':
+      return entrada.initiation === 'offer' ? `nova sessão ou aqui? ${texto(entrada.title) ?? ''}`.trim() : null
+    case 'mcp__ccd_directory__propose_branch':
+      return 'confirmar o branch'
+    case 'mcp__ccd_directory__request_directory':
+      return 'escolher a pasta'
+    default:
+      return null
+  }
 }
 
 function avisarEstado($: EngineInterface, barra: Barra, virou: Estado | null) {
@@ -428,6 +646,15 @@ async function fecharFaixas($: EngineInterface, casa: (faixa: Faixa) => boolean,
   for (const faixa of alvos) {
     if (estado === 'falhou') void avisar($, 'erro', `Falhou: ${faixa.titulo}`)
   }
+  // Nada mais roda (fora o demo): a barra que aguardava agente ou background volta a andamento.
+  if (!lista.some(faixa => faixa.fim === null && !demonstracao(faixa.id))) {
+    const antes = await read($, barras)
+    const depois = retomarAguardando(antes, agora)
+    if (depois !== antes) {
+      await update($, barras, atual => retomarAguardando(atual, agora))
+      void guardar($)
+    }
+  }
   const comando = alvos.find(faixa => faixa.tipo === 'comando')
   const restam = lista.some(faixa => faixa.tipo === 'comando' && faixa.fim === null)
   if (comando && estado === 'concluida' && !restam) {
@@ -462,50 +689,50 @@ async function rodarDemo($: EngineInterface) {
   await limparDemo($)
   await update($, oculto, () => false)
   const A = 'demo-pagina'
-  const B = 'demo-csv'
+  const B = 'demo-leads'
   const C = 'demo-email'
   const D = 'demo-notas'
   const agente = (id: string, titulo: string, tipoAgente: string, modelo: string, esforco: string, ferramenta: string) =>
     abrirFaixa($, { id, tipo: 'agente', titulo, modelo, esforco, ferramenta, barra: A, tipoAgente })
-  const build = comandoLegivel('cd ~/projetos/app && npm run build -- --filter docs')
+  const build = comandoLegivel('cd ~/projetos/app && npm run build -- --filter vendas')
   const roteiro: [number, () => Promise<unknown>][] = [
     [0, () => abrirPainelProgresso($).catch(() => {})],
     [0, () =>
       atualizar($, {
         id: A,
-        titulo: 'Publicar a versão 2.0',
+        titulo: 'Publicar página de vendas',
         etapas: [
-          { nome: 'Preparar', passos: ['Ler o changelog', 'Mapear mudanças da API (investigador)'] },
-          { nome: 'Construir', passos: ['Redesenhar a página de docs (executor-design)', 'Conferir os exemplos (executor-leve)', 'Ler o guia de migração (leitor)'] },
+          { nome: 'Preparar', passos: ['Ler o briefing', 'Pesquisar concorrentes (investigador)'] },
+          { nome: 'Construir', passos: ['Redigir o hero (executor-design)', 'Conferir a oferta (executor-leve)', 'Ler a planilha de preços (leitor)'] },
           { nome: 'Verificar', passos: ['Testar no celular', 'Revisar tudo (executor-pesado)'] },
         ],
       }, null)],
-    [200, () => atualizar($, { id: B, titulo: 'Migrar usuários do CSV', passos: ['Ler o CSV', 'Limpar duplicados', 'Gravar no banco'] }, null)],
-    [400, () => atualizar($, { id: C, titulo: 'Rodar a suíte de testes', passos: ['Rodar unitários', 'Escolher o ambiente', 'Rodar e2e'] }, null)],
+    [200, () => atualizar($, { id: B, titulo: 'Importar leads de setembro', passos: ['Baixar a planilha', 'Limpar duplicados', 'Subir no CRM'] }, null)],
+    [400, () => atualizar($, { id: C, titulo: 'Revisar o e-mail de lançamento', passos: ['Ler o rascunho', 'Escolher o assunto', 'Agendar o envio'] }, null)],
     [600, () => atualizar($, { id: D, titulo: 'Atualizar notas de versão', passos: ['Ler o diff', 'Escrever', 'Revisar'] }, null)],
     [1000, () => atualizar($, { id: A, proximo: true }, null)],
-    [1200, () => agente('demo-pesquisa', 'Mapear mudanças da API', 'investigador', 'opus 5.5', 'alto', 'WebSearch')],
-    [1800, () => agente('demo-docs', 'Redesenhar a página de docs', 'executor-design', 'sonnet 5.5', 'médio', 'Read')],
+    [1200, () => agente('demo-pesquisa', 'Pesquisar concorrentes', 'investigador', 'opus 5.5', 'alto', 'WebSearch')],
+    [1800, () => agente('demo-hero', 'Redigir o hero', 'executor-design', 'sonnet 5.5', 'médio', 'Read')],
     [2200, () => abrirFaixa($, { id: 'demo-build', tipo: 'comando', titulo: build.titulo, pasta: build.pasta, barra: B })],
-    [2400, () => agente('demo-exemplos', 'Conferir os exemplos', 'executor-leve', 'haiku 4.5', 'baixo', 'Grep')],
-    [2800, () => agente('demo-guia', 'Ler o guia de migração', 'leitor', 'sonnet 5.5', 'médio', 'Read')],
+    [2400, () => agente('demo-oferta', 'Conferir a oferta', 'executor-leve', 'haiku 4.5', 'baixo', 'Grep')],
+    [2800, () => agente('demo-precos', 'Ler a planilha de preços', 'leitor', 'sonnet 5.5', 'médio', 'Read')],
     [3000, () => atualizar($, { id: B, proximo: true }, null)],
     [3200, () => atualizar($, { id: C, proximo: true }, null)],
     [3400, () => atualizar($, { id: D, proximo: true }, null)],
-    [3800, () => mudarFaixa($, 'demo-docs', faixa => ({ ...faixa, ferramenta: 'Edit' }))],
+    [3800, () => mudarFaixa($, 'demo-hero', faixa => ({ ...faixa, ferramenta: 'Edit' }))],
     [4200, () => atualizar($, { id: D, proximo: true }, null)],
-    [4600, () => atualizar($, { id: C, estado: 'esperando', nota: 'Rodo os e2e no staging?' }, null)],
-    [5400, () => mudarFaixa($, 'demo-exemplos', faixa => ({ ...faixa, ferramenta: 'Bash', aprovacao: true }))],
+    [4600, () => atualizar($, { id: C, estado: 'esperando', nota: 'Qual assunto vai no e-mail?' }, null)],
+    [5400, () => mudarFaixa($, 'demo-oferta', faixa => ({ ...faixa, ferramenta: 'Bash', aprovacao: true }))],
     [5800, () => atualizar($, { id: D, estado: 'concluido', proximo: true }, null)],
-    [7000, () => atualizar($, { id: B, falhou: 'Limpar duplicados', nota: '12 linhas com data inválida' }, null)],
-    [7400, () => mudarFaixa($, 'demo-exemplos', faixa => ({ ...faixa, aprovacao: false }))],
+    [7000, () => atualizar($, { id: B, falhou: 'Limpar duplicados', nota: 'CRM recusou 12 linhas' }, null)],
+    [7400, () => mudarFaixa($, 'demo-oferta', faixa => ({ ...faixa, aprovacao: false }))],
     [8000, () => atualizar($, { id: A, proximo: true }, null)],
     [9000, () => fecharFaixas($, faixa => faixa.id === 'demo-pesquisa', 'concluida')],
-    [11000, () => fecharFaixas($, faixa => faixa.id === 'demo-guia', 'falhou')],
-    [13000, () => fecharFaixas($, faixa => faixa.id === 'demo-exemplos', 'concluida')],
+    [11000, () => fecharFaixas($, faixa => faixa.id === 'demo-precos', 'falhou')],
+    [13000, () => fecharFaixas($, faixa => faixa.id === 'demo-oferta', 'concluida')],
     [14000, () => atualizar($, { id: A, proximo: true }, null)],
     [17000, () => fecharFaixas($, faixa => faixa.id === 'demo-build', 'concluida')],
-    [19000, () => fecharFaixas($, faixa => faixa.id === 'demo-docs', 'concluida')],
+    [19000, () => fecharFaixas($, faixa => faixa.id === 'demo-hero', 'concluida')],
     [19500, () => atualizar($, { id: A, proximo: true }, null)],
     [23000, () => atualizar($, { id: A, proximo: true }, null)],
     [27000, () => atualizar($, { id: A, estado: 'concluido', proximo: true }, null)],
@@ -557,16 +784,6 @@ async function abrirPainelProgresso($: EngineInterface) {
   await update($, janela, atual => ({ ...atual, aberto: true }))
   const lugar = await $.ui.open({ id: PAINEL, title: TITULO_DO_PAINEL, columns: 60 })
   if (!lugar.isPlaced) $.ui.toast(`O painel de progresso abriu sem lugar na tela: ${lugar.reason}`)
-}
-
-/** Abre sozinho uma vez por sessão (primeira barra com 3+ passos, primeiro subagente), se o usuário não o fechou. */
-async function abrirSozinho($: EngineInterface) {
-  const estado = await read($, janela)
-  if (estado.fechadoPeloUsuario || estado.abriuSozinho || estado.aberto) return
-  garantirRelogio($)
-  await update($, janela, atual => ({ ...atual, abriuSozinho: true }))
-  const lugar = await $.ui.open({ id: PAINEL, title: TITULO_DO_PAINEL, columns: 60 }).catch(() => undefined)
-  if (lugar) await update($, janela, atual => ({ ...atual, aberto: true }))
 }
 
 /** O clique num cartão ou no "abrir" de uma faixa: abre a conversa do agente no painel. */
@@ -632,11 +849,79 @@ async function enviarAoAgente($: EngineInterface, digitado: string) {
 }
 
 /** Painel fechado: a cauda sai da memória e as linhas novas deixam de ser guardadas. */
-async function fecharPainel($: EngineInterface, peloUsuario: boolean) {
+async function fecharPainel($: EngineInterface) {
   aberto = null
   enviadas = []
   await update($, painel, () => SEM_AGENTE)
-  await update($, janela, atual => ({ ...atual, aberto: false, fechadoPeloUsuario: atual.fechadoPeloUsuario || peloUsuario }))
+  await update($, janela, atual => ({ ...atual, aberto: false }))
+}
+
+/** O painel "Anotações": as anotações e as pendências da conversa, aberto pelo botão do barra-uso ou /anotacoes. */
+const PAINEL_DAS_ANOTACOES = 'anotacoes'
+/** O átomo que o barra-uso escreve a cada clique no botão "Anotações": um contador; cada escrita alterna o painel. */
+const PEDIDO_DO_BARRA_USO = { plugin: 'barra-uso', key: 'anotacoes' } as const
+
+async function abrirAnotacoes($: EngineInterface) {
+  await update($, janelaAnotacoes, atual => ({ ...atual, aberto: true }))
+  const lugar = await $.ui.open({ id: PAINEL_DAS_ANOTACOES, title: 'Anotações', columns: 56 })
+  if (!lugar.isPlaced) $.ui.toast(`O painel de anotações abriu sem lugar na tela: ${lugar.reason}`)
+}
+
+/** Fechado: some a edição, o menu e o pedido de apagar; o rascunho do formulário novo e o que foi recolhido ficam. */
+const anotacoesFechadas = ($: EngineInterface) =>
+  update($, janelaAnotacoes, atual => ({ ...atual, aberto: false, editando: null, apagando: null, menu: null, edicao: CAMPOS_VAZIOS }))
+
+async function fecharAnotacoes($: EngineInterface) {
+  await $.ui.close({ id: PAINEL_DAS_ANOTACOES }).catch(() => {})
+  await anotacoesFechadas($)
+}
+
+async function alternarAnotacoes($: EngineInterface) {
+  if ((await read($, janelaAnotacoes)).aberto) await fecharAnotacoes($)
+  else await abrirAnotacoes($)
+}
+
+/** Grava as anotações a partir do painel e guarda no store; o título vazio vira toast. */
+async function mudarAnotacoes($: EngineInterface, mudar: (lista: Anotacao[], agora: number) => Anotacao[]) {
+  const agora = await $.clock.now()
+  await update($, anotacoes, lista => mudar(lista, agora))
+  void guardar($)
+}
+
+async function adicionarPeloPainel($: EngineInterface, campo?: Campo, valor?: string) {
+  const { novo } = await read($, janelaAnotacoes)
+  const campos = campo ? { ...novo, [campo]: valor ?? '' } : novo
+  const nova = comoAnotacao(campos, await $.clock.now())
+  if (!nova) return void $.ui.toast('Dê um título à anotação.')
+  await mudarAnotacoes($, lista => gravarAnotacao(lista, nova))
+  await update($, janelaAnotacoes, atual => ({ ...atual, novo: CAMPOS_VAZIOS, formulario: false }))
+}
+
+/** O recolher do painel muda o que a conversa guarda: grava no store como as anotações. */
+async function recolherNoPainel($: EngineInterface, mudar: (atual: JanelaAnotacoes) => Partial<JanelaAnotacoes>) {
+  await update($, janelaAnotacoes, atual => ({ ...atual, ...mudar(atual) }))
+  void guardar($)
+}
+
+const semGrupo = (lista: string[], grupo: string) => lista.filter(outro => outro.trim().toLowerCase() !== grupo.trim().toLowerCase())
+
+async function salvarEdicao($: EngineInterface, campo?: Campo, valor?: string) {
+  const { editando, edicao } = await read($, janelaAnotacoes)
+  if (editando === null) return
+  const campos = campo ? { ...edicao, [campo]: valor ?? '' } : edicao
+  if (!campos.titulo.trim()) return void $.ui.toast('Dê um título à anotação.')
+  await mudarAnotacoes($, (lista, agora) => editarAnotacao(lista, editando, campos, agora))
+  await update($, janelaAnotacoes, atual => ({ ...atual, editando: null, edicao: CAMPOS_VAZIOS }))
+}
+
+async function resolverPeloPainel($: EngineInterface, item: Pendencia) {
+  await update($, pendencias, lista => lista.filter(outra => outra.titulo !== item.titulo))
+  void guardar($)
+}
+
+async function copiarAnotacao($: EngineInterface, item: Anotacao, surface: Parameters<EngineInterface['ui']['copy']>[0]['surface']) {
+  const copia = await $.ui.copy({ text: item.valor || item.titulo, surface }).catch((erro: unknown) => ({ isCopied: false as const, reason: String(erro) }))
+  $.ui.toast(copia.isCopied ? `Copiado: ${item.titulo}` : `Não deu para copiar: ${'reason' in copia ? copia.reason : 'sem motivo'}`)
 }
 
 /** Espera o desenho dos mods de baixo até ESPERA_ABAIXO_MS; passado isso, a banda sai sem ele. */
@@ -651,6 +936,128 @@ async function desenhoDeBaixo($: EngineInterface, pedido: Promise<RenderElement>
   return abaixo
 }
 
+type ElementosDaFaixa = { Caixa: Elements['terminal']['Box']; Button: Elements['terminal']['Button']; Texto: Elements['terminal']['Text'] }
+type ElementosDoDesktop = ElementosDaFaixa & { Svg: Elements['desktop']['Svg'] }
+
+const contagem = (n: number) => `${n} ${n === 1 ? 'pendência' : 'pendências'}`
+// O respiro direito do Button plain no app: a pílula de quem depende acaba 1 px antes, onde acaba o glifo da seta.
+const RECUO_DA_SETA = 1
+// O pino e os ícones dos itens: Svg de 24 com o desenho 7 px para dentro, sob o ícone da pílula do barra-uso; as faixas
+// de agente usam a mesma calha (LARGURA_DA_CALHA).
+const LARGURA_DO_ICONE = LARGURA_DA_CALHA
+
+/**
+ * Um Svg sem `width` dentro de um Box em coluna que cresce: o app desenha a imagem com max-width:100% e, na coluna, a
+ * estica até a largura do Box, que vai até o vizinho da direita. Width 0 no Box: a imagem não empurra a linha.
+ */
+function esticado(Box: Elements['desktop']['Box'], key: string, desenho: RenderElement) {
+  return (
+    <Box key={key} flexDirection="column" flexGrow={1} width={0}>
+      {desenho}
+    </Box>
+  )
+}
+
+/**
+ * Desktop: recolhida, uma linha com o pino, a imagem das pílulas (contagem, um item por pílula e o "+N") esticada até
+ * a seta (um Button) na borda direita; Svg não recebe clique, então só a seta alterna. Aberta, o cabeçalho volta a ser
+ * "N pendências" num Button e há uma linha por item: ícone, título em texto nativo e, logo depois dele, a pílula de quem
+ * depende. Nada aqui tem largura em px da banda: as bordas vêm do flex.
+ */
+function pendenciasNoDesktop($: EngineInterface, els: ElementosDoDesktop, lista: Pendencia[], aberta: boolean, total: number) {
+  const { Caixa, Button, Texto, Svg } = els
+  const alternar = () => update($, pendenciasAbertas, valor => !valor)
+  const recolher = () => update($, pendenciasAbertas, () => false)
+  const rotulo = contagem(lista.length)
+  // As pílulas decidem quantas cabem na largura estimada sem o pino e a seta (3 colunas e o vão).
+  const pilulas = aberta ? null : svgDasPilulas(lista, total - LARGURA_DO_ICONE - Math.ceil(4 * 8.5))
+  const quemPx = larguraDoQuem(lista)
+
+  return (
+    <Caixa key="pendencias" flexDirection="column">
+      <Caixa key="pendencias:topo" flexDirection="row" alignItems="center">
+        <Svg key="pendencias:pino" source={svgDoIconeDaPendencia('pino')} alt="pendências" width={LARGURA_DO_ICONE} height={ALT_PENDENCIA} />
+        {pilulas ? (
+          esticado(Caixa, 'pendencias:corpo', <Svg key="pendencias:pilulas" source={pilulas.source} alt={pilulas.alt} height={ALT_PILULAS} />)
+        ) : (
+          <Caixa key="pendencias:corpo" flexDirection="row" flexGrow={1} width={0} overflow="hidden">
+            {/* Sem label: no desktop o label toma o lugar dos filhos. A key basta para achar o botão. */}
+            <Button key="pendencias:abrir" plain onPress={alternar}>
+              <Texto bold>{rotulo}</Texto>
+            </Button>
+          </Caixa>
+        )}
+        {/* A seta é texto num Button, como o "%" das barras: os dois glifos terminam no mesmo x, com o mesmo respiro
+            do botão. ⏷ e ⏶ ficam no meio da linha a 13 px; ▾ some de tão pequeno, ⌄ cai abaixo da linha e ∨ lê
+            como a letra v. minWidth: o botão nunca corta o glifo. */}
+        <Caixa key="pendencias:fim" minWidth={3} flexShrink={0} justifyContent="flex-end">
+          <Button key="pendencias:seta" label={aberta ? '⏶' : '⏷'} plain dimColor hover={{ dimColor: false }} onPress={alternar} />
+        </Caixa>
+      </Caixa>
+      {aberta && <Svg key="pendencias:respiro" source={svgDoRespiro(6)} alt="espaço" height={6} />}
+      {aberta &&
+        lista.map((item, i) => (
+          <Caixa key={`pendencia:${i}`} flexDirection="row" alignItems="center" columnGap={1}>
+            <Caixa key={`pendencia:${i}:titulo`} flexDirection="row" alignItems="center" flexShrink={1}>
+              <Svg key={`pendencia:${i}:icone`} source={svgDoIconeDaPendencia(item.icone)} alt={`ícone ${item.icone}`} width={LARGURA_DO_ICONE} height={ALT_PENDENCIA} />
+              {/* Button plain como o rótulo de cima: o mesmo respiro põe o título no mesmo x de "N pendências". */}
+              <Caixa key={`pendencia:${i}:texto`} flexShrink={1} overflow="hidden">
+                <Button key={`pendencia:${i}:abrir`} plain onPress={recolher}>
+                  <Texto wrap="truncate-end">{item.titulo}</Texto>
+                </Button>
+              </Caixa>
+            </Caixa>
+            {quemPx > 0 && (
+              <Svg key={`pendencia:${i}:quem`} source={svgDoQuem(item.quem, quemPx, RECUO_DA_SETA)} alt={item.quem ? `depende de ${item.quem}` : 'sem responsável'} width={quemPx + RECUO_DA_SETA} height={ALT_PENDENCIA} />
+            )}
+          </Caixa>
+        ))}
+    </Caixa>
+  )
+}
+
+/** Terminal: "◇ N pendências ▾  prévia" e, aberta, uma linha por item em árvore, com de quem depende numa coluna. */
+function pendenciasNoTerminal($: EngineInterface, els: ElementosDaFaixa, lista: Pendencia[], aberta: boolean, colunas: number) {
+  const { Caixa, Button, Texto } = els
+  const alternar = () => update($, pendenciasAbertas, valor => !valor)
+  const rotulo = contagem(lista.length)
+  const previa = aberta ? '' : previaDasPendencias(lista.map(item => item.titulo), colunas - rotulo.length - 8, texto => [...texto].length)
+  const larguraQuem = Math.max(0, ...lista.map(item => [...item.quem].length))
+  const larguraTitulo = Math.max(10, Math.min(Math.max(...lista.map(item => [...item.titulo].length)), colunas - 6 - (larguraQuem ? larguraQuem + 1 : 0)))
+
+  return (
+    <Caixa key="pendencias" flexDirection="column">
+      <Caixa key="pendencias:topo" flexDirection="row" gap={1}>
+        <Texto color="warning">◇</Texto>
+        <Button key="pendencias:abrir" label={rotulo} plain onPress={alternar} />
+        <Button key="pendencias:seta" label={aberta ? '▴' : '▾'} plain dimColor hover={{ dimColor: false }} onPress={alternar} />
+        {!!previa && <Texto dimColor wrap="truncate-end">{previa}</Texto>}
+      </Caixa>
+      {aberta &&
+        lista.map((item, i) => (
+          <Caixa key={`pendencia:${i}`} flexDirection="row" gap={1}>
+            <Texto dimColor>{i === lista.length - 1 ? '  └' : '  ├'}</Texto>
+            <Caixa width={larguraTitulo} flexShrink={1}>
+              <Texto wrap="truncate-end">{item.titulo}</Texto>
+            </Caixa>
+            {!!item.quem && <Texto dimColor>{item.quem}</Texto>}
+          </Caixa>
+        ))}
+    </Caixa>
+  )
+}
+
+/** Uma árvore que não desenha nada: Box sem filhos, ou Text vazio. */
+function semConteudo(no: RenderElement | null | undefined): boolean {
+  if (!no) return true
+  const filhos: unknown[] = (no as { children?: unknown[] }).children ?? []
+  const lista = filhos.flat(Infinity).filter(filho => filho !== null && filho !== undefined && filho !== false && filho !== '')
+  if (no.type === 'Box') return lista.every(filho => typeof filho === 'object' && semConteudo(filho as RenderElement))
+  if (no.type === 'Text') return lista.length === 0
+
+  return false
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.tool.register({ name: 'progresso', description: DESCRICAO, inputSchema: ESQUEMA })
@@ -662,12 +1069,15 @@ export const register: Register = on => {
     })
     await $.command.register({ name: 'progresso-demo', description: 'Demonstração de 30 s com todos os estados das barras, faixas, painel e sons', immediate: true })
     await $.command.register({ name: 'progresso-limpar', description: 'Remove todas as barras e faixas', immediate: true })
+    await $.command.register({ name: 'anotacoes', description: 'Abre ou fecha o painel de anotações e pendências da conversa', immediate: true })
 
     // O `/progresso off` vale para as sessões seguintes até um `/progresso on`.
     const guardado = (await $.store.get('oculto')) === true
     await update($, oculto, () => guardado)
     // Um reload a quente mantém o estado (a sessão confere); processo novo e sessão retomada buscam no store.
     await restaurarSessao($)
+    // Escrita mesmo vazia: o barra-uso lê a contagem e, sem valor nenhum, entende que este mod não carregou.
+    await update($, anotacoes, lista => [...lista])
     garantirRelogio($)
     void lerPerfis($)
     // O painel da versão anterior do mod tinha outro id: um que ficou aberto num reload fecha.
@@ -683,14 +1093,24 @@ export const register: Register = on => {
     for (const timer of demo) timer.cancel()
     demo = []
     if ((await read($, janela)).aberto) await $.ui.close({ id: PAINEL }).catch(() => {})
-    await fecharPainel($, false)
+    await fecharPainel($)
     await update($, janela, () => JANELA_INICIAL)
     await update($, barras, () => [])
     await update($, faixas, () => [])
+    await update($, pendencias, () => [])
+    if ((await read($, janelaAnotacoes)).aberto) await $.ui.close({ id: PAINEL_DAS_ANOTACOES }).catch(() => {})
+    await update($, janelaAnotacoes, atual => ({ ...JANELA_DAS_ANOTACOES, novo: atual.novo }))
+    await update($, anotacoes, () => [])
+    // A gravação em voo leva o texto desta sessão; o da seguinte vem do store.
+    await gravacao
+    textoLivre = null
+    await update($, pendenciasAbertas, () => false)
     await update($, turno, () => '')
     await update($, sessao, () => '')
     proximaFerramenta.clear()
     bloqueadas.clear()
+    pendenciasNoTurno = ''
+    lembrado = ''
 
     return next(e)
   })
@@ -709,11 +1129,51 @@ export const register: Register = on => {
   // o progresso dele já está na faixa.
   on('tool.call', { tool: FERRAMENTA }, async ($, e) => {
     if (e.agentId !== undefined) return { result: SO_DA_PRINCIPAL }
-    const resposta = await atualizar($, e, null)
-    if ('negar' in resposta) return { deny: resposta.negar }
-    if (resposta.barra.passos.length >= 3) await abrirSozinho($)
+    const entrada = e as unknown as Record<string, unknown>
+    const comPend = pedePendencias(entrada)
+    const comNotas = pedeAnotacoes(entrada)
+    if (!comPend && !comNotas) {
+      const resposta = await atualizar($, e, null)
+      if ('negar' in resposta) return { deny: resposta.negar }
 
-    return { result: resposta.texto }
+      return { result: resposta.texto }
+    }
+    // Pendências e anotações, sozinhas ou junto de uma atualização da barra: cada parte responde numa linha.
+    const agora = await $.clock.now()
+    const partes: { linha: string; negar?: string }[] = []
+    if (comPend) {
+      const saida: { pend: ReturnType<typeof aplicarPendencias> } = { pend: { negar: 'Sem resposta.' } }
+      await update($, pendencias, lista => {
+        saida.pend = aplicarPendencias(lista, entrada, agora)
+        return 'negar' in saida.pend ? lista : saida.pend.pendencias
+      })
+      if ('negar' in saida.pend) partes.push({ linha: `Pendências não alteradas: ${saida.pend.negar}`, negar: saida.pend.negar })
+      else partes.push({ linha: saida.pend.texto })
+      // O lembrete do Stop só se dá por atendido quando a chamada registrou ao menos uma pendência.
+      if (!('negar' in saida.pend) && saida.pend.adicionadas > 0) pendenciasNoTurno = await read($, turno)
+    }
+    if (comNotas) {
+      const saida: { notas: ReturnType<typeof aplicarAnotacoes> } = { notas: { negar: 'Sem resposta.' } }
+      await update($, anotacoes, lista => {
+        saida.notas = aplicarAnotacoes(lista, entrada, agora)
+        return 'negar' in saida.notas ? lista : saida.notas.anotacoes
+      })
+      if ('negar' in saida.notas) partes.push({ linha: `Anotações não alteradas: ${saida.notas.negar}`, negar: saida.notas.negar })
+      else partes.push({ linha: saida.notas.texto })
+      // As notas livres entram só na listagem, mascaradas e cortadas; nunca no system prompt.
+      const livres = entrada.listarAnotacoes === true && !('negar' in saida.notas) ? listaDasNotas(await lerNotasLivres($)) : null
+      if (livres) partes.push({ linha: livres })
+    }
+    if (partes.some(parte => parte.negar === undefined)) void guardar($)
+    const linhas = partes.map(parte => parte.linha).join('\n')
+    if (entrada.id === undefined) {
+      const unica = partes.length === 1 ? partes[0] : undefined
+      return unica?.negar !== undefined ? { deny: unica.negar } : { result: linhas }
+    }
+    const resposta = await atualizar($, e, null)
+    const linhaBarra = 'negar' in resposta ? `Barra não alterada: ${resposta.negar}` : resposta.texto
+
+    return { result: `${linhaBarra}\n${linhas}` }
   })
 
   // O turno da conversa principal: a faixa só se pendura em barra mudada nele, e a banda mostra as finalizadas dele.
@@ -724,19 +1184,11 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A resposta do usuário tira a espera. No app desktop o Enter do usuário chega com origem sdk; notificação de tarefa e
-  // as outras origens ficam de fora.
+  // A mensagem do usuário não tira a espera: a barra esperando só muda quando o modelo a atualiza. Virar andamento aqui
+  // fazia o Stop do turno seguinte cobrar de novo a barra que o modelo tinha deixado esperando.
   on('prompt.submit', async ($, e, next) => {
     garantirRelogio($)
     await restaurarSessao($)
-    if (e.origin.kind === 'composer' || e.origin.kind === 'bridge' || e.origin.kind === 'sdk') {
-      if ((await read($, barras)).some(barra => barra.estado === 'esperando')) {
-        await update($, barras, lista =>
-          lista.map((barra): Barra => (barra.estado === 'esperando' ? { ...barra, estado: 'andamento', nota: '' } : barra)),
-        )
-        void guardar($)
-      }
-    }
 
     return next(e)
   })
@@ -778,14 +1230,22 @@ export const register: Register = on => {
     const atual = await read($, turno)
     const fundo = (e.background_tasks ?? []).length
     fundoNoStop = { turno: atual, n: fundo }
-    if (resultado.block !== undefined || e.stop_hook_active) return resultado
+    if (resultado.block !== undefined) return resultado
     const vivas = (await read($, faixas)).filter(faixa => faixa.fim === null && !demonstracao(faixa.id)).length
     if (fundo > 0 || vivas > 0) return resultado
-    const lista = pendentes(await read($, barras)).filter(barra => !demonstracao(barra.id) && bloqueadas.get(barra.id) !== atual)
-    if (lista.length === 0) return resultado
-    for (const barra of lista) bloqueadas.set(barra.id, atual)
+    const todas = (await read($, barras)).filter(barra => !demonstracao(barra.id))
+    const lista = e.stop_hook_active ? [] : pendentes(todas).filter(barra => bloqueadas.get(barra.id) !== atual)
+    if (lista.length > 0) {
+      for (const barra of lista) bloqueadas.set(barra.id, atual)
+      return { ...resultado, block: textoDoBloqueio(lista, FERRAMENTA) }
+    }
+    // Barra deixada esperando, com passo pulado ou falho neste turno, e nenhuma \`pendencias\` nele: um lembrete por
+    // turno, também depois de outro bloqueio (é quando a barra costuma virar esperando). Pendência sozinha não bloqueia.
+    const depois = paraDepois(todas, atual)
+    if (depois.length === 0 || pendenciasNoTurno === atual || lembrado === atual) return resultado
+    lembrado = atual
 
-    return { ...resultado, block: textoDoBloqueio(lista, FERRAMENTA) }
+    return { ...resultado, block: textoDoLembrete(depois) }
   })
 
   // Faixa de subagente: nasce no despacho, mostra a ferramenta em uso e fecha no fim do turno do agente.
@@ -800,7 +1260,6 @@ export const register: Register = on => {
         tipoAgente: e.subagentType,
         dono: e.parentAgentId ?? null,
       })
-      await abrirSozinho($)
     }
 
     return agente
@@ -824,7 +1283,14 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const agente = e.agentId
-    if (agente === undefined) return next(e)
+    if (agente === undefined) {
+      // No app desktop a decisão do usuário chega por cartão, e em bypass nenhum PermissionRequest sobe: a caixa de
+      // próximo passo com pergunta, o plano para aprovar, a oferta de sessão, o branch e o pedido de pasta tocam o som.
+      const texto = cartaoDeDecisao(e.tool, e as unknown as Record<string, unknown>)
+      if (texto) void avisar($, 'decisao', `Esperando você: ${cortar(texto, 80)}`)
+
+      return next(e)
+    }
     garantirRelogio($)
     await garantirFaixa($, agente, false)
     await mostrarFerramenta($, agente, ferramentaCurta(e.tool), e.tool_use_id)
@@ -879,12 +1345,39 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // O fechar do usuário, pela marca do painel ou pelo Esc: o painel não abre mais sozinho nesta sessão.
+  // O fechar do usuário, pela marca do painel ou pelo Esc. O painel só abre a pedido: /progresso painel, o percentual
+  // de uma barra ou o número de uma faixa.
   on('ui.close', { id: PAINEL }, async ($, e, next) => {
     const fechou = await next(e)
-    await fecharPainel($, e.origin.kind === 'person')
+    await fecharPainel($)
 
     return fechou
+  })
+
+  on('ui.close', { id: PAINEL_DAS_ANOTACOES }, async ($, e, next) => {
+    const fechou = await next(e)
+    await anotacoesFechadas($)
+
+    return fechou
+  })
+
+  // O botão "Anotações" do barra-uso: a cada clique ele escreve o contador dele, e só o dono escreve um valor; este
+  // hook ouve a escrita e alterna o painel, que é deste mod. Sem clique e sem comando, ninguém escreve.
+  // O tipo do matcher é o do contrato deste mod (o do barra-uso só viria por `dependencies`, que tornaria um mod
+  // obrigatório para o outro): o matcher vai sem tipo e a escrita é lida pelos dois campos que importam.
+  on('state.set', PEDIDO_DO_BARRA_USO as never, async ($, e, next) => {
+    const gravado = await next(e)
+    const escrita = e as unknown as { value?: unknown; previous?: unknown }
+    if (escrita.value !== escrita.previous) await alternarAnotacoes($).catch(() => {})
+
+    return gravado
+  })
+
+  on('command.run', { command: 'anotacoes' }, async $ => {
+    await alternarAnotacoes($)
+    const { aberto } = await read($, janelaAnotacoes)
+
+    return { text: `Painel de anotações ${aberto ? 'aberto' : 'fechado'} · ${contagemDeAnotacoes((await read($, anotacoes)).length)}` }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -952,8 +1445,42 @@ export const register: Register = on => {
     // desenho que espera os outros e só então lê não sai com um estado mais velho que o de um desenho seguinte.
     const abaixo = await desenhoDeBaixo($, next(e))
     const { Box: Caixa, Button, Text: Texto } = $.ui.resolve(e)
-    const vazio = () => abaixo ?? <Caixa flexDirection="column" />
-    if (e.props.hasSurvey || (await read($, oculto))) return vazio()
+    // A banda tem de devolver uma árvore: sem nada a desenhar, vai o que veio de baixo e, só sem ele, um Box vazio.
+    if (e.props.hasSurvey) return abaixo ?? <Caixa flexDirection="column" />
+    const colunas = e.props.bodyColumns
+    const { trilha, faixa: larguraFaixa, total } = larguras(colunas)
+    // A faixa de pendências fica embaixo das barras, colada ao prompt, e não segue o /progresso off: é o lembrete.
+    const listaPend = await read($, pendencias)
+    const aberta = await read($, pendenciasAbertas)
+    const pend =
+      listaPend.length === 0
+        ? null
+        : e.surface === 'desktop'
+          ? pendenciasNoDesktop($, { Caixa, Button, Texto, Svg: $.ui.resolve(e).Svg }, listaPend, aberta, total)
+          : pendenciasNoTerminal($, { Caixa, Button, Texto }, listaPend, aberta, colunas)
+    // O bloco do mod (barras e pendências) e, embaixo, o que os outros desenham; o que vem vazio de baixo não ganha vão.
+    const comAbaixo = (bloco: RenderElement) =>
+      semConteudo(abaixo) ? (
+        bloco
+      ) : (
+        <Caixa flexDirection="column" gap={e.surface === 'desktop' ? 1 : 0}>
+          {bloco}
+          {abaixo}
+        </Caixa>
+      )
+    // O bloco estica até a borda da banda, com ou sem barras: a conta de `total` em px fica 60 a 75 px aquém da área
+    // real no app (prints de 23/10) e o que dependia dela parava longe da borda. A borda direita vem do flex.
+    const vazio = () =>
+      pend ? (
+        comAbaixo(
+          <Caixa key="progresso" flexDirection="column">
+            {pend}
+          </Caixa>,
+        )
+      ) : (
+        (abaixo ?? <Caixa flexDirection="column" />)
+      )
+    if (await read($, oculto)) return vazio()
     const agora = await $.clock.now()
     const todas = vistas(await read($, barras), await read($, faixas), agora, await read($, turno))
     if (todas.length === 0) return vazio()
@@ -963,18 +1490,22 @@ export const register: Register = on => {
     const candidatas = [...todas.filter(vista => demonstracao(vista.id)).reverse(), ...todas.filter(vista => !demonstracao(vista.id))]
     const fora = new Set(candidatas.slice(0, Math.max(0, todas.length - MAX_VISTAS)))
     const mostradas = todas.filter(vista => !fora.has(vista))
-    const colunas = e.props.bodyColumns
     const escondidas =
       todas.length > mostradas.length ? `+${todas.length - mostradas.length} barras · /progresso painel mostra todas` : ''
-    // Só o percentual à direita de cada barra, numa coluna fixa ("100%" cabe), clicável: abre o painel. A contagem
-    // X/Y fica no painel e no resultado da ferramenta.
-    // A coluna do % tem 4 colunas ("100%"), alinhada à direita: o fim dela é trilha + vão + 4 colunas, a mesma conta
-    // em colunas da linha da faixa (ícone 16 px + vão + número de 2 + vão + faixa), e as duas acabam juntas.
+    // Só o percentual à direita de cada barra, clicável: abre o painel. A contagem X/Y fica no painel e no resultado
+    // da ferramenta. No terminal a coluna tem as 4 células de "100%". No desktop o Button plain soma o respiro dos dois
+    // lados e 4 colunas cortavam o texto em ".."; lá a coluna é a da direita (COLUNA_DIREITA, a do relógio das faixas),
+    // em minWidth: "100%" cabe com folga, e se a fonte crescer a coluna cresce em vez de cortar.
     const percentualDe = (vista: (typeof mostradas)[number]) =>
       automatica(vista)
         ? []
         : [
-            <Caixa key={`pct:${vista.id}`} width={4} flexShrink={0} justifyContent="flex-end">
+            <Caixa
+              key={`pct:${vista.id}`}
+              {...(e.surface === 'desktop' ? { minWidth: COLUNA_DIREITA } : { width: 4 })}
+              flexShrink={0}
+              justifyContent="flex-end"
+            >
               <Button
                 key={`painel:${vista.id}`}
                 label={`${String(percentual(vista)).padStart(3, ESPACO_DE_DIGITO)}%`}
@@ -995,35 +1526,40 @@ export const register: Register = on => {
 
     if (e.surface === 'desktop') {
       const { Box, Svg, Text } = $.ui.resolve(e)
-      // A trilha vai até um vão de 8 px antes da coluna do percentual (32 px, cabe "100%"); as faixas vão até o fim
-      // dessa coluna. À esquerda delas, o ícone (16), o número (24, 3 colunas) e dois vãos de 8: a faixa tem a trilha menos 16.
-      // Tudo em múltiplos de 8, a célula em que o app desenha a imagem.
-      const trilha = naGrade(Math.max(120, larguraUtil(colunas) - VAO - COLUNA_PCT))
-      const total = trilha + VAO + COLUNA_PCT
-      const larguraFaixa = total - 16 - VAO - 24 - VAO
+      // Cada linha: os desenhos sem `width` num Box que estica (`esticado`) e, à direita, a coluna de COLUNA_DIREITA
+      // (o "%" na barra, o relógio na faixa) com o mesmo vão: trilha e faixas acabam no mesmo x, encostadas nela, e a
+      // coluna encosta na borda real da banda. Faixa: a calha de 24 px com o ícone a 7 (a do pino e do "5H"), o número
+      // clicável e a faixa; o tempo vai num Text, que anda a cada tique sem trocar a imagem da faixa.
       const linhaCheia = { flexDirection: 'row', alignItems: 'center', columnGap: 1 } as const
+      // O fio fica direto na coluna da banda, que já estica a imagem; `esticado` (width 0) aqui o deixava com 0 px.
+      const fio = (key: string) => <Svg key={key} source={svgDoDivisor()} alt="divisor" height={1} />
+      const direita = (key: string, filho: RenderElement) => (
+        <Box key={key} minWidth={COLUNA_DIREITA} flexShrink={0} justifyContent="flex-end">
+          {filho}
+        </Box>
+      )
 
-      return (
-        <Box flexDirection="column" gap={1}>
+      return comAbaixo(
+        <Box key="progresso" flexDirection="column" gap={1}>
           {!!escondidas && <Text dimColor>{escondidas}</Text>}
           {mostradas.flatMap((vista, i) => {
-            const debaixo = svgDasFaixas(vista, larguraFaixa, agora, false)
+            const debaixo = svgDasFaixas(vista, larguraFaixa, false)
             // Grupo automático: sem trilha vazia a 0%, só o rótulo, a contagem e as faixas.
             let desenho
             if (automatica(vista)) {
-              const rotulo = svgDoRotulo(vista, trilha)
-              desenho = <Svg key={`rotulo:${vista.id}`} source={rotulo.source} alt={rotulo.alt} width={trilha} height={rotulo.altura} />
+              const rotulo = svgDoRotulo(vista)
+              desenho = <Svg key={`rotulo:${vista.id}`} source={rotulo.source} alt={rotulo.alt} height={rotulo.altura} />
             } else {
               const trilhaSvg = svgDaTrilha(vista, trilha, agora)
               if (trilhaSvg.desliza) assentar($, agora)
-              desenho = <Svg key={`trilha:${vista.id}`} source={trilhaSvg.source} alt={trilhaSvg.alt} width={trilha} height={ALT_TRILHA} />
+              desenho = <Svg key={`trilha:${vista.id}`} source={trilhaSvg.source} alt={trilhaSvg.alt} height={ALT_TRILHA} />
             }
 
             return [
-              ...(i > 0 ? [<Svg key={`fio:${vista.id}`} source={svgDoDivisor(total)} alt="divisor" width={total} height={1} />] : []),
+              ...(i > 0 ? [fio(`fio:${vista.id}`)] : []),
               <Box key={`barra:${vista.id}`} flexDirection="column">
-                <Box {...linhaCheia}>
-                  {desenho}
+                <Box key={`topo:${vista.id}`} {...linhaCheia}>
+                  {esticado(Box, `trilha-caixa:${vista.id}`, desenho)}
                   {percentualDe(vista)}
                 </Box>
                 {debaixo.map(faixa => {
@@ -1033,20 +1569,22 @@ export const register: Register = on => {
                   return (
                     <Box key={`linha:${vista.id}:${faixa.key}`} {...linhaCheia}>
                       {/* alt não vazio: com alt "" o app não desenha o Svg (o ícone sumia da calha ao vivo). */}
-                      <Svg key={`icone:${vista.id}:${faixa.key}`} source={faixa.icone} alt={linha?.comando ? 'comando' : 'agente'} width={16} height={faixa.altura} />
-                      {/* Coluna fixa de 3 colunas: o botão nativo do desktop tem respiro interno e cortava o "2" com 2 colunas. */}
-                      <Box key={`numero:${vista.id}:${faixa.key}`} width={3} flexShrink={0}>
+                      <Svg key={`icone:${vista.id}:${faixa.key}`} source={faixa.icone} alt={linha?.comando ? 'comando' : 'agente'} width={LARGURA_DA_CALHA} height={faixa.altura} />
+                      {/* minWidth, não width: o botão nativo do desktop tem respiro interno e cortava o "2" com 2 colunas. */}
+                      <Box key={`numero:${vista.id}:${faixa.key}`} minWidth={COLUNA_DO_NUMERO} flexShrink={0}>
                         {numeroDaFaixa(faixa.key, faixa.rotulo, linha)}
                       </Box>
-                      <Svg key={`faixa:${vista.id}:${faixa.key}`} source={faixa.source} alt={alt} width={larguraFaixa} height={faixa.altura} />
+                      {esticado(Box, `faixa-caixa:${vista.id}:${faixa.key}`, <Svg key={`faixa:${vista.id}:${faixa.key}`} source={faixa.source} alt={alt} height={faixa.altura} />)}
+                      {direita(`tempo:${vista.id}:${faixa.key}`, <Text dimColor>{linha?.relogio ?? ''}</Text>)}
                     </Box>
                   )
                 })}
               </Box>,
             ]
           })}
-          {abaixo}
-        </Box>
+          {!!pend && fio('fio:pendencias')}
+          {pend}
+        </Box>,
       )
     }
 
@@ -1056,7 +1594,7 @@ export const register: Register = on => {
     // Ícone, contagem, percentual e os vãos entre eles ocupam umas 20 colunas.
     const larguraRotulo = Math.max(6, colunas - larguraTitulo - larguraTrilho - 20)
 
-    return (
+    return comAbaixo(
       <Box flexDirection="column">
         {!!escondidas && <Text dimColor>{escondidas}</Text>}
         {mostradas.map(vista => {
@@ -1103,8 +1641,8 @@ export const register: Register = on => {
             </Box>
           )
         })}
-        {abaixo}
-      </Box>
+        {pend}
+      </Box>,
     )
   })
 
@@ -1119,7 +1657,7 @@ export const register: Register = on => {
     const fechar = async () => {
       // O fechar do próprio mod não passa pelo hook de ui.close dele: o estado do painel sai aqui.
       await $.ui.close({ id: PAINEL })
-      await fecharPainel($, true)
+      await fecharPainel($)
     }
 
     if (estado.agente === null) {
@@ -1165,10 +1703,19 @@ export const register: Register = on => {
       </Box>
     )
     if (Svg && vista && linha) {
-      const largura = Math.max(240, e.props.bodyColumns * 8)
+      const largura = Math.max(240, e.props.bodyColumns * 8) - TEMPO_PX - 8
       // Id próprio: a faixa do painel tem outra largura e não disputa o desenho guardado com a da banda.
-      const faixa = svgDasFaixas({ ...vista, id: `painel:${vista.id}`, linhas: [linha], ocultas: 0 }, largura, agora)[0]
-      if (faixa) topo = <Svg key="topo" source={faixa.source} alt={faixa.alt} width={largura} height={faixa.altura} />
+      const faixa = svgDasFaixas({ ...vista, id: `painel:${vista.id}`, linhas: [linha], ocultas: 0 }, largura)[0]
+      if (faixa) {
+        topo = (
+          <Box key="topo" flexDirection="row" alignItems="center" columnGap={1}>
+            <Svg key="topo-faixa" source={faixa.source} alt={faixa.alt} width={largura} height={faixa.altura} />
+            <Box key="topo-tempo" width={TEMPO_COLUNAS} flexShrink={0} justifyContent="flex-end">
+              <Text dimColor>{linha.relogio}</Text>
+            </Box>
+          </Box>
+        )
+      }
     }
 
     return (
@@ -1198,6 +1745,65 @@ export const register: Register = on => {
         />
         <Button key="fechar-painel" role="dismiss" label="Fechar" onPress={fechar} />
       </Box>
+    )
+  })
+
+  // O painel "Anotações": o resumo, o formulário recolhido, as anotações por grupo que recolhe e as pendências em âmbar.
+  on('ui.render', { component: 'Pane', requestId: PAINEL_DAS_ANOTACOES }, async ($, e, next) => {
+    if (e.surface !== 'desktop' && e.surface !== 'terminal') return next(e)
+    const { Box, Button, Input, Link, Text } = $.ui.resolve(e)
+    const Svg = e.surface === 'desktop' ? $.ui.resolve(e).Svg : undefined
+    const mudarJanela = (mudar: (atual: JanelaAnotacoes) => JanelaAnotacoes) => update($, janelaAnotacoes, mudar)
+    // O painel sem o teclado recusa o foco: o campo fica onde está, sem aviso.
+    const focar = (chave: string) => $.ui.focus({ requestId: PAINEL_DAS_ANOTACOES, key: chave }).catch(() => {})
+
+    return desenharAnotacoes(
+      { Box, Text, Button, Input, Link, Svg },
+      {
+        colunas: e.props.bodyColumns,
+        anotacoes: await read($, anotacoes),
+        pendencias: await read($, pendencias),
+        janela: await read($, janelaAnotacoes),
+        notasLivres: await lerNotasLivres($),
+      },
+      {
+        abrirFormulario: async () => {
+          await mudarJanela(atual => ({ ...atual, formulario: true, editando: null, edicao: CAMPOS_VAZIOS }))
+          await focar('novo:titulo')
+        },
+        // Cancelar fecha e limpa o rascunho.
+        cancelarFormulario: () => mudarJanela(atual => ({ ...atual, formulario: false, novo: CAMPOS_VAZIOS })),
+        mudarNovo: (campo, valor) => mudarJanela(atual => ({ ...atual, novo: { ...atual.novo, [campo]: valor } })),
+        adicionar: (campo, valor) => adicionarPeloPainel($, campo, valor),
+        focar,
+        alternarGrupo: grupo =>
+          recolherNoPainel($, atual => {
+            const fora = semGrupo(atual.recolhidos, grupo)
+            return { recolhidos: fora.length < atual.recolhidos.length ? fora : [...atual.recolhidos, grupo] }
+          }),
+        alternarPendencias: () => recolherNoPainel($, atual => ({ pendenciasRecolhidas: !atual.pendenciasRecolhidas })),
+        recolherTudo: (recolher, grupos) =>
+          recolherNoPainel($, () => ({ recolhidos: recolher ? grupos : [], pendenciasRecolhidas: recolher, notasRecolhidas: recolher })),
+        alternarNotas: () => recolherNoPainel($, atual => ({ notasRecolhidas: !atual.notasRecolhidas })),
+        mudarAlturaDasNotas: passo => recolherNoPainel($, atual => ({ notasAltura: alturaDasNotas(atual.notasAltura, passo) })),
+        mudarNotas: texto => mudarNotasLivres($, texto),
+        alternarMenu: item => mudarJanela(atual => ({ ...atual, menu: atual.menu === item.titulo ? null : item.titulo, apagando: null })),
+        copiar: (item, surface) => copiarAnotacao($, item, surface),
+        editar: async item => {
+          await mudarJanela(atual => ({ ...atual, editando: item.titulo, apagando: null, menu: null, edicao: { titulo: item.titulo, valor: item.valor, grupo: item.grupo } }))
+          await focar('editar:titulo')
+        },
+        mudarEdicao: (campo, valor) => mudarJanela(atual => ({ ...atual, edicao: { ...atual.edicao, [campo]: valor } })),
+        salvarEdicao: (campo, valor) => salvarEdicao($, campo, valor),
+        cancelarEdicao: () => mudarJanela(atual => ({ ...atual, editando: null, edicao: CAMPOS_VAZIOS })),
+        apagar: item => mudarJanela(atual => ({ ...atual, apagando: item.titulo, editando: null })),
+        confirmarApagar: async item => {
+          await mudarAnotacoes($, lista => lista.filter(outra => outra.titulo !== item.titulo))
+          await mudarJanela(atual => ({ ...atual, apagando: null, menu: null }))
+        },
+        cancelarApagar: () => mudarJanela(atual => ({ ...atual, apagando: null })),
+        resolver: item => resolverPeloPainel($, item),
+      },
     )
   })
 }
